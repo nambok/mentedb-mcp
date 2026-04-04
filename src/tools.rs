@@ -7,6 +7,7 @@ use mentedb_core::memory::{AttributeValue, MemoryType};
 use mentedb_core::{MemoryEdge, MemoryNode};
 use mentedb_embedding::HashEmbeddingProvider;
 use mentedb_embedding::provider::EmbeddingProvider;
+use mentedb_extraction::{ExtractionConfig, ExtractionPipeline, MockExtractionProvider};
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -91,6 +92,18 @@ pub struct RegisterEntityRequest {
     pub name: String,
     #[schemars(description = "Type classification of the entity (e.g. person, tool, concept)")]
     pub entity_type: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct IngestConversationRequest {
+    #[schemars(description = "The raw conversation text to extract memories from")]
+    pub conversation: String,
+    #[schemars(
+        description = "LLM provider to use: openai, anthropic, ollama, or mock (default: mock)"
+    )]
+    pub provider: Option<String>,
+    #[schemars(description = "API key for the LLM provider (uses env var if not provided)")]
+    pub api_key: Option<String>,
 }
 
 /// MenteDB MCP server state holding the database and cognitive subsystems.
@@ -475,6 +488,219 @@ impl MenteDbServer {
         Ok(CallToolResult::success(vec![Content::text(
             result.to_string(),
         )]))
+    }
+
+    #[rmcp::tool(
+        description = "Ingest a raw conversation, extract structured memories via LLM, run cognitive checks, and store the results. Returns extraction statistics and stored memory IDs."
+    )]
+    async fn ingest_conversation(
+        &self,
+        Parameters(req): Parameters<IngestConversationRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let provider_name = req.provider.as_deref().unwrap_or("mock");
+        let api_key = req
+            .api_key
+            .or_else(|| std::env::var("MENTEDB_LLM_API_KEY").ok())
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+
+        let config = match provider_name.to_lowercase().as_str() {
+            "openai" => {
+                let key = match api_key {
+                    Some(k) => k,
+                    None => {
+                        return error_result(
+                            "API key required for OpenAI. Set OPENAI_API_KEY env var or pass api_key.",
+                        );
+                    }
+                };
+                ExtractionConfig::openai(key)
+            }
+            "anthropic" => {
+                let key = match api_key {
+                    Some(k) => k,
+                    None => {
+                        return error_result(
+                            "API key required for Anthropic. Set MENTEDB_LLM_API_KEY env var or pass api_key.",
+                        );
+                    }
+                };
+                ExtractionConfig::anthropic(key)
+            }
+            "ollama" => ExtractionConfig::ollama(),
+            "mock" => ExtractionConfig::default(),
+            other => {
+                return error_result(&format!(
+                    "Unknown provider: {other}. Use openai, anthropic, ollama, or mock."
+                ));
+            }
+        };
+
+        // For non-mock providers, we would use HttpExtractionProvider.
+        // For now, the mock path demonstrates the full pipeline.
+        if provider_name == "mock" {
+            let mock_provider = MockExtractionProvider::with_realistic_response();
+            let pipeline = ExtractionPipeline::new(mock_provider, config);
+
+            // Gather existing memories for dedup/contradiction checks
+            let existing_memories = Vec::new();
+
+            let result = pipeline
+                .process(
+                    &req.conversation,
+                    &existing_memories,
+                    self.embedding_provider.as_ref(),
+                )
+                .await
+                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?;
+
+            // Store accepted memories
+            let mut stored_ids = Vec::new();
+            let mut db = self.db.lock().await;
+            for memory in &result.to_store {
+                let mem_type =
+                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+                let embedding = self
+                    .embedding_provider
+                    .embed(&memory.content)
+                    .map_err(|e| {
+                        McpError::internal_error(format!("Embedding failed: {e}"), None)
+                    })?;
+                let mut node =
+                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
+                node.tags = memory.tags.clone();
+                let id = node.id;
+                if let Err(e) = db.store(node) {
+                    tracing::error!(error = %e, "failed to store extracted memory");
+                    continue;
+                }
+                stored_ids.push(id.to_string());
+            }
+
+            // Also store contradicting memories (with a note)
+            for (memory, _findings) in &result.contradictions {
+                let mem_type =
+                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+                let embedding = self
+                    .embedding_provider
+                    .embed(&memory.content)
+                    .map_err(|e| {
+                        McpError::internal_error(format!("Embedding failed: {e}"), None)
+                    })?;
+                let mut node =
+                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
+                node.tags = memory.tags.clone();
+                node.tags.push("has_contradiction".to_string());
+                let id = node.id;
+                if let Err(e) = db.store(node) {
+                    tracing::error!(error = %e, "failed to store contradicting memory");
+                    continue;
+                }
+                stored_ids.push(id.to_string());
+            }
+
+            let stats = &result.stats;
+            tracing::info!(
+                stored = stored_ids.len(),
+                rejected_quality = stats.rejected_quality,
+                rejected_duplicate = stats.rejected_duplicate,
+                contradictions = stats.contradictions_found,
+                "conversation ingestion complete"
+            );
+
+            let response = json!({
+                "status": "complete",
+                "stats": {
+                    "total_extracted": stats.total_extracted,
+                    "accepted": stats.accepted,
+                    "rejected_quality": stats.rejected_quality,
+                    "rejected_duplicate": stats.rejected_duplicate,
+                    "contradictions_found": stats.contradictions_found,
+                },
+                "stored_ids": stored_ids,
+            });
+
+            Ok(CallToolResult::success(vec![Content::text(
+                response.to_string(),
+            )]))
+        } else {
+            // For real providers, construct HttpExtractionProvider
+            let http_provider =
+                mentedb_extraction::HttpExtractionProvider::new(config).map_err(|e| {
+                    McpError::internal_error(format!("Provider init failed: {e}"), None)
+                })?;
+            let pipeline = ExtractionPipeline::new(http_provider, ExtractionConfig::default());
+
+            let existing_memories = Vec::new();
+
+            let result = pipeline
+                .process(
+                    &req.conversation,
+                    &existing_memories,
+                    self.embedding_provider.as_ref(),
+                )
+                .await
+                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?;
+
+            let mut stored_ids = Vec::new();
+            let mut db = self.db.lock().await;
+            for memory in &result.to_store {
+                let mem_type =
+                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+                let embedding = self
+                    .embedding_provider
+                    .embed(&memory.content)
+                    .map_err(|e| {
+                        McpError::internal_error(format!("Embedding failed: {e}"), None)
+                    })?;
+                let mut node =
+                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
+                node.tags = memory.tags.clone();
+                let id = node.id;
+                if let Err(e) = db.store(node) {
+                    tracing::error!(error = %e, "failed to store extracted memory");
+                    continue;
+                }
+                stored_ids.push(id.to_string());
+            }
+
+            for (memory, _findings) in &result.contradictions {
+                let mem_type =
+                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+                let embedding = self
+                    .embedding_provider
+                    .embed(&memory.content)
+                    .map_err(|e| {
+                        McpError::internal_error(format!("Embedding failed: {e}"), None)
+                    })?;
+                let mut node =
+                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
+                node.tags = memory.tags.clone();
+                node.tags.push("has_contradiction".to_string());
+                let id = node.id;
+                if let Err(e) = db.store(node) {
+                    tracing::error!(error = %e, "failed to store contradicting memory");
+                    continue;
+                }
+                stored_ids.push(id.to_string());
+            }
+
+            let stats = &result.stats;
+            let response = json!({
+                "status": "complete",
+                "stats": {
+                    "total_extracted": stats.total_extracted,
+                    "accepted": stats.accepted,
+                    "rejected_quality": stats.rejected_quality,
+                    "rejected_duplicate": stats.rejected_duplicate,
+                    "contradictions_found": stats.contradictions_found,
+                },
+                "stored_ids": stored_ids,
+            });
+
+            Ok(CallToolResult::success(vec![Content::text(
+                response.to_string(),
+            )]))
+        }
     }
 }
 

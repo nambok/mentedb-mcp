@@ -202,10 +202,16 @@ impl MenteDbServer {
         let id = node.id;
         let mut db = self.db.lock().await;
         match db.store(node) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(
-                json!({ "id": id.to_string(), "status": "stored" }).to_string(),
-            )])),
-            Err(e) => error_result(&format!("Failed to store memory: {e}")),
+            Ok(()) => {
+                tracing::info!(id = %id, memory_type = %req.memory_type, "memory stored");
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({ "id": id.to_string(), "status": "stored" }).to_string(),
+                )]))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "store_memory failed");
+                error_result(&format!("Failed to store memory: {e}"))
+            }
         }
     }
 
@@ -226,8 +232,10 @@ impl MenteDbServer {
         match db.recall(&query) {
             Ok(window) => {
                 if window.blocks.is_empty() {
+                    tracing::warn!(id = %id, "memory not found");
                     return error_result(&format!("Memory not found: {id}"));
                 }
+                tracing::info!(id = %id, blocks = window.blocks.len(), "memory recalled");
                 let result = json!({
                     "id": id.to_string(),
                     "blocks": window.blocks.len(),
@@ -238,7 +246,10 @@ impl MenteDbServer {
                     result.to_string(),
                 )]))
             }
-            Err(e) => error_result(&format!("Recall failed: {e}")),
+            Err(e) => {
+                tracing::error!(id = %id, error = %e, "recall_memory failed");
+                error_result(&format!("Recall failed: {e}"))
+            }
         }
     }
 
@@ -258,6 +269,7 @@ impl MenteDbServer {
         let mut db = self.db.lock().await;
         match db.recall_similar(&embedding, k) {
             Ok(results) => {
+                tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
                 let items: Vec<serde_json::Value> = results
                     .iter()
                     .map(|(id, score)| json!({ "id": id.to_string(), "score": score }))
@@ -266,7 +278,10 @@ impl MenteDbServer {
                     json!({ "results": items, "count": items.len() }).to_string(),
                 )]))
             }
-            Err(e) => error_result(&format!("Search failed: {e}")),
+            Err(e) => {
+                tracing::error!(query = %req.query, error = %e, "search_memories failed");
+                error_result(&format!("Search failed: {e}"))
+            }
         }
     }
 
@@ -303,16 +318,22 @@ impl MenteDbServer {
 
         let mut db = self.db.lock().await;
         match db.relate(edge) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(
-                json!({
-                    "status": "related",
-                    "from": from_id.to_string(),
-                    "to": to_id.to_string(),
-                    "edge_type": req.edge_type,
-                })
-                .to_string(),
-            )])),
-            Err(e) => error_result(&format!("Failed to relate memories: {e}")),
+            Ok(()) => {
+                tracing::info!(from = %from_id, to = %to_id, edge_type = %req.edge_type, "memories related");
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "status": "related",
+                        "from": from_id.to_string(),
+                        "to": to_id.to_string(),
+                        "edge_type": req.edge_type,
+                    })
+                    .to_string(),
+                )]))
+            }
+            Err(e) => {
+                tracing::error!(from = %from_id, to = %to_id, error = %e, "relate_memories failed");
+                error_result(&format!("Failed to relate memories: {e}"))
+            }
         }
     }
 
@@ -327,15 +348,21 @@ impl MenteDbServer {
         };
 
         if let Some(reason) = &req.reason {
-            tracing::info!("Forgetting memory {id}: {reason}");
+            tracing::info!(id = %id, reason = %reason, "forgetting memory");
         }
 
         let mut db = self.db.lock().await;
         match db.forget(id) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(
-                json!({ "status": "forgotten", "id": id.to_string() }).to_string(),
-            )])),
-            Err(e) => error_result(&format!("Failed to forget memory: {e}")),
+            Ok(()) => {
+                tracing::info!(id = %id, "memory forgotten");
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({ "status": "forgotten", "id": id.to_string() }).to_string(),
+                )]))
+            }
+            Err(e) => {
+                tracing::error!(id = %id, error = %e, "forget_memory failed");
+                error_result(&format!("Failed to forget memory: {e}"))
+            }
         }
     }
 

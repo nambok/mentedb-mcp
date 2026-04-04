@@ -4,7 +4,11 @@ mod server;
 mod tools;
 
 use clap::Parser;
+use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use config::ServerConfig;
 
@@ -24,13 +28,44 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
+    let data_dir = ServerConfig::resolve_data_dir(&cli.data_dir);
+
+    // Ensure data directory exists for log file
+    std::fs::create_dir_all(&data_dir).ok();
+
+    // File logger (persistent, all levels)
+    let log_path = data_dir.join("mentedb-mcp.log");
+    let file_appender = tracing_appender::rolling::daily(&data_dir, "mentedb-mcp.log");
+    let (file_writer, _guard) = non_blocking(file_appender);
+
+    // Stderr logger (for MCP clients that capture stderr)
+    let (stderr_writer, _stderr_guard) = non_blocking(std::io::stderr());
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(
+            fmt::layer()
+                .with_writer(file_writer)
+                .with_ansi(false)
+                .with_target(true)
+                .with_thread_ids(true),
+        )
+        .with(
+            fmt::layer()
+                .with_writer(stderr_writer)
+                .with_ansi(false)
+                .with_target(false),
+        )
         .init();
 
-    let data_dir = ServerConfig::resolve_data_dir(&cli.data_dir);
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        data_dir = %data_dir.display(),
+        log_file = %log_path.display(),
+        embedding_dim = cli.embedding_dim,
+        "mentedb-mcp starting"
+    );
+
     let config = ServerConfig::new(data_dir, cli.embedding_dim);
 
     server::run(config).await

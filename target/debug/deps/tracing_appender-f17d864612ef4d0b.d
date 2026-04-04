@@ -1,0 +1,10 @@
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/deps/tracing_appender-f17d864612ef4d0b.d: /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/lib.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/non_blocking.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling/builder.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/worker.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/sync.rs
+
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/deps/libtracing_appender-f17d864612ef4d0b.rmeta: /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/lib.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/non_blocking.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling/builder.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/worker.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/sync.rs
+
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/lib.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/non_blocking.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling/builder.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/worker.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/sync.rs:

@@ -1,0 +1,14 @@
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/deps/serde-e3e29f980f441a0f.d: /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/deps/libserde-e3e29f980f441a0f.rlib: /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/deps/libserde-e3e29f980f441a0f.rmeta: /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/namdev/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/namdev/Documents/work/personal/mentedb-mcp/target/debug/build/serde-23fcc076a5b7eed8/out

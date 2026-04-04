@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mentedb": {
+      "command": "mentedb-mcp",
+      "args": ["--data-dir", "~/.mentedb"],
+      "transportType": "stdio"
+    }
+  }
+}

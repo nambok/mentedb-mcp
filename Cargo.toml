@@ -1,0 +1,31 @@
+[package]
+name = "mentedb-mcp"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "MCP server for MenteDB, the cognition aware database for AI agent memory"
+repository = "https://github.com/nambok/mentedb-mcp"
+readme = "README.md"
+keywords = ["mcp", "ai", "memory", "database", "agents"]
+categories = ["database", "command-line-utilities"]
+
+[[bin]]
+name = "mentedb-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "1", features = ["server", "transport-io"] }
+mentedb = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-core = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-cognitive = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-context = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-embedding = { git = "https://github.com/nambok/mentedb", branch = "main" }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+schemars = "1"

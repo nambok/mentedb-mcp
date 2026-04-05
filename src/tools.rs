@@ -1603,7 +1603,7 @@ impl MenteDbServer {
             })
             .collect();
         let removed_ids: Vec<String> = delta.removed.iter().map(|id| id.to_string()).collect();
-        let context_response = json!({
+        let _context_response = json!({
             "memories": context_items,
             "count": context_items.len(),
             "new_count": delta.added.len(),
@@ -1631,76 +1631,35 @@ impl MenteDbServer {
             .collect();
         drop(pain_registry);
 
-        // 3. Extract memories from the conversation exchange
+        // 3. Store conversation turn as episodic memory (searchable context)
+        // Structured extraction is handled by the LLM calling store_memory directly.
         let conversation = format!(
             "User: {}\nAssistant: {}",
             req.user_message, req.assistant_response
         );
-        let existing: Vec<MemoryNode> = all.iter().map(|sm| sm.memory.clone()).collect();
-
-        let mock_provider = MockExtractionProvider::with_realistic_response();
-        let pipeline = ExtractionPipeline::new(mock_provider, ExtractionConfig::default());
-        let extraction_result = pipeline
-            .process(&conversation, &existing, self.embedding_provider.as_ref())
-            .await;
 
         let mut stored_ids = Vec::new();
-        let mut inference_results = Vec::new();
-
-        match extraction_result {
-            Ok(result) => {
-                match store_extraction_results(
-                    &result,
-                    &mut db,
-                    self.embedding_provider.as_ref(),
-                    agent_id,
-                ) {
-                    Ok(ids) => {
-                        // Tag with project context if provided
-                        if let Some(ctx) = &req.project_context {
-                            for id_str in &ids {
-                                if let Ok(id) = parse_uuid(id_str) {
-                                    // Re-recall to tag (no direct update API)
-                                    let _ = id; // project tagging noted for future
-                                    tracing::debug!(
-                                        id = %id_str,
-                                        project = %ctx,
-                                        "would tag with project context"
-                                    );
-                                }
-                            }
-                        }
-
-                        // 4. Run write-time inference on each stored memory
-                        let engine = WriteInferenceEngine::new();
-                        let all_updated = recall_all_memories(&mut db);
-                        let all_nodes: Vec<MemoryNode> =
-                            all_updated.iter().map(|sm| sm.memory.clone()).collect();
-
-                        for id_str in &ids {
-                            if let Ok(id) = parse_uuid(id_str)
-                                && let Some(target) =
-                                    all_nodes.iter().find(|m| m.id == MemoryId(id))
-                            {
-                                let actions = engine.infer_on_write(target, &all_nodes, &[]);
-                                if !actions.is_empty() {
-                                    inference_results.push(json!({
-                                        "memory_id": id_str,
-                                        "actions": actions.len(),
-                                    }));
-                                }
-                            }
-                        }
-
-                        stored_ids = ids;
-                    }
-                    Err(e) => {
-                        tracing::error!(error = ?e, "process_turn: extraction store failed");
-                    }
-                }
+        let embedding = self
+            .embedding_provider
+            .embed(&conversation)
+            .unwrap_or_default();
+        let mut node = MemoryNode::new(
+            AgentId(agent_id),
+            MemoryType::Episodic,
+            conversation.clone(),
+            embedding,
+        );
+        node.tags = vec!["conversation-turn".to_string()];
+        if let Some(ctx) = &req.project_context {
+            node.tags.push(ctx.clone());
+        }
+        let id = node.id;
+        match db.store(node) {
+            Ok(()) => {
+                stored_ids.push(id.to_string());
             }
             Err(e) => {
-                tracing::warn!(error = %e, "process_turn: extraction failed, continuing without");
+                tracing::error!(error = ?e, "process_turn: failed to store episodic turn");
             }
         }
 
@@ -1732,7 +1691,7 @@ impl MenteDbServer {
         };
         let mut tracker = self.trajectory_tracker.lock().await;
         tracker.record_turn(node);
-        let predictions = tracker.predict_next_topics();
+        let _predictions = tracker.predict_next_topics();
         drop(tracker);
 
         // ── Auto-maintenance (staggered) ──
@@ -1850,22 +1809,23 @@ impl MenteDbServer {
             context_count = context_items.len(),
             new_memories = delta.added.len(),
             memories_stored = stored_ids.len(),
-            inference_actions = inference_results.len(),
             pain_warnings = pain_warnings.len(),
             elapsed_ms = elapsed_ms,
             "process_turn complete"
         );
 
+        // Build compact context: just content strings the LLM needs
+        let context_summaries: Vec<&str> = context_items
+            .iter()
+            .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
+            .collect();
+
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "turn_id": req.turn_id,
-                "context": context_response,
-                "memories_stored": stored_ids,
-                "inference_results": inference_results,
+                "ok": true,
+                "context": context_summaries,
+                "stored": stored_ids.len(),
                 "pain_warnings": pain_warnings,
-                "predicted_topics": predictions,
-                "maintenance": maintenance,
-                "elapsed_ms": elapsed_ms,
             })
             .to_string(),
         )]))

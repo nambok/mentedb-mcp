@@ -153,18 +153,22 @@ const AGENT_INSTRUCTIONS: &str = r#"# Memory
 
 You have persistent memory via MenteDB. Use it automatically, never wait to be asked.
 
-## Every conversation start
+## Every turn (MANDATORY)
 
-1. Call `search_memories` with keywords from the user's first message to load relevant context.
-2. Call `get_cognitive_state` to check for active pain signals or knowledge gaps.
-3. If results come back, use them to inform your responses. Mention what you remember when relevant.
+Call `process_turn` on EVERY conversation turn. This is the core memory loop:
+- Pass the user's message and your response
+- Increment `turn_id` each turn (start at 0)
+- It automatically: searches relevant context, extracts and stores new memories, runs write-time inference (contradiction detection, edge suggestion), and returns pain warnings and topic predictions
 
-## During conversation
+On the FIRST turn, also call `get_cognitive_state` to check for active pain signals or knowledge gaps.
 
-- When the user shares a preference, decision, or project detail, call `store_memory` immediately. Use descriptive tags.
-- When a fact changes or the user corrects you, store the new fact and call `relate_memories` with `supersedes` pointing from the new memory to the old one.
-- When something goes wrong (bad advice, failed approach), call `record_pain` so you can warn about it in the future.
-- When the user says "forget" or "don't remember", call `forget_memory`.
+## When to use other tools
+
+- `store_memory`: For explicit facts the user states that you want to ensure are captured (preferences, corrections). Use descriptive tags.
+- `search_memories`: When you need to look up something specific outside of `process_turn`.
+- `record_pain`: When something goes wrong (bad advice, failed approach) so you can warn about it in the future.
+- `relate_memories`: When a fact changes, store the new fact and relate with `supersedes` pointing from new to old.
+- `forget_memory`: When the user says "forget" or "don't remember".
 
 ## Memory types
 

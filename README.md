@@ -236,13 +236,7 @@ MCP resources provide read only access to server state.
 
 ## Architecture
 
-The server runs on stdio transport using the [rmcp](https://crates.io/crates/rmcp) framework. It is backed by the MenteDB engine, which is composed of 13 Rust crates covering storage, indexing, graph, context assembly, consolidation, cognitive systems, embedding, and extraction. Cognitive subsystems (pain registry, phantom tracker, trajectory tracker) are initialized at startup and maintained in memory for the lifetime of the server process.
-
-## Links
-
-- [MenteDB Engine](https://github.com/nambok/mentedb) — the core database (13 crates)
-- [MenteDB Site](https://github.com/nambok/mentedb-site) — landing page
-- [crates.io](https://crates.io/crates/mentedb-mcp)
+The server runs on stdio transport using the rmcp framework. It is backed by the MenteDB engine, which is composed of 13 Rust crates covering storage, indexing, graph, context assembly, consolidation, cognitive systems, embedding, and extraction. Cognitive subsystems (pain registry, phantom tracker, trajectory tracker) are initialized at startup and maintained in memory for the lifetime of the server process.
 
 ## License
 

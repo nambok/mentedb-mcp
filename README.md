@@ -1,22 +1,25 @@
 # MenteDB MCP Server
 
-An MCP (Model Context Protocol) server for [MenteDB](https://github.com/nambok/mentedb), the
-cognition aware database engine for AI agent memory. This server exposes MenteDB's storage,
-retrieval, graph relationships, context assembly, and cognitive features to any MCP compatible
-AI client over stdio transport.
+The MCP (Model Context Protocol) server for MenteDB, the mind database for AI agents.
 
-## Installation
+[![crates.io](https://img.shields.io/crates/v/mentedb-mcp)](https://crates.io/crates/mentedb-mcp)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+## What is this?
+
+This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. Store, search, relate, and consolidate memories through the standard MCP protocol. The server exposes 30 tools spanning core memory operations, knowledge graph traversal, context assembly, memory consolidation, cognitive systems, and LLM based extraction, all over stdio transport.
+
+## Quick Start
+
+Install from crates.io:
 
 ```bash
 cargo install mentedb-mcp
 ```
 
-## Configuration
-
 ### Claude Desktop
 
-Add to `~/.config/claude/claude_desktop_config.json` (macOS/Linux) or
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Add to `~/.config/claude/claude_desktop_config.json` (macOS/Linux) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -61,163 +64,114 @@ Add to `.vscode/mcp.json` in your project:
 }
 ```
 
-## CLI Options
+## Available Tools (30 tools)
+
+### Core Memory (7 tools)
+
+| Tool | Description |
+|------|-------------|
+| `store_memory` | Store a new memory with content, type, tags, and metadata. Returns the UUID. |
+| `get_memory` | Retrieve a memory by UUID with all fields including salience and confidence. |
+| `recall_memory` | Recall a specific memory by UUID. Returns content, type, metadata, timestamps. |
+| `search_memories` | Semantic similarity search with optional type filtering and result limit. |
+| `relate_memories` | Create a typed edge between two memories (caused, contradicts, supports, etc). |
+| `forget_memory` | Delete a memory from the database with optional reason. |
+| `ingest_conversation` | Extract structured memories from raw conversation text via LLM provider. |
+
+Memory types: `episodic`, `semantic`, `procedural`, `anti_pattern`, `reasoning`, `correction`.
+
+Edge types: `caused`, `before`, `related`, `contradicts`, `supports`, `supersedes`, `derived`, `part_of`.
+
+### Context Assembly (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `assemble_context` | Build an optimized context window from memories for a query with a real token budget. Supports `structured`, `compact`, and `delta` output formats. Returns zone allocations and token usage metadata. |
+
+### Knowledge Graph (5 tools)
+
+| Tool | Description |
+|------|-------------|
+| `get_related` | Traverse relationships from a memory with optional edge type filter and depth. |
+| `find_path` | Find the shortest path between two memories in the knowledge graph. |
+| `get_subgraph` | Extract all nodes and edges within N hops of a center memory. |
+| `find_contradictions` | Find all memories that contradict a given memory via graph edges. |
+| `propagate_belief` | Propagate a confidence change through the graph, returning all affected memories. |
+
+### Memory Consolidation (6 tools)
+
+| Tool | Description |
+|------|-------------|
+| `consolidate_memories` | Cluster similar memories and merge them into consolidated semantic memories. |
+| `apply_decay` | Apply time based salience decay to all memories. Configurable half life. |
+| `compress_memory` | Extract key sentences from a memory, removing filler. Returns compression ratio. |
+| `evaluate_archival` | Categorize all memories into keep, archive, delete, or consolidate decisions. |
+| `extract_facts` | Extract structured subject/predicate/object triples from a memory. |
+| `gdpr_forget` | GDPR compliant deletion of all memories for a subject with full audit log. |
+
+### Cognitive Systems (11 tools)
+
+| Tool | Description |
+|------|-------------|
+| `record_pain` | Record a negative experience (pain signal) so MenteDB warns on similar contexts. |
+| `detect_phantoms` | Scan content for knowledge gaps, entities referenced but not in memory. |
+| `resolve_phantom` | Mark a knowledge gap (phantom memory) as resolved. |
+| `record_trajectory` | Record a conversation turn for trajectory tracking and topic prediction. |
+| `predict_topics` | Predict likely next topics based on the current conversation trajectory. |
+| `detect_interference` | Find pairs of memories similar enough to confuse an LLM, with disambiguation hints. |
+| `check_stream` | Check LLM output text against known facts for contradictions and reinforcements. |
+| `write_inference` | Run write time inference: contradiction detection, edge suggestion, confidence adjustment. |
+| `register_entity` | Register an entity for phantom memory detection. |
+| `get_cognitive_state` | Full cognitive state snapshot: pain signals, phantoms, trajectory predictions. |
+| `get_stats` | Database statistics: version, memory count estimate, operational status. |
+
+## Configuration
+
+### CLI Arguments
 
 ```
 mentedb-mcp [OPTIONS]
 
 Options:
-  --data-dir <PATH>         Path to the data directory [default: ~/.mentedb]
-  --embedding-dim <DIM>     Embedding vector dimension [default: 128]
-  -h, --help                Print help
+  --data-dir <PATH>           Data directory path [default: ~/.mentedb]
+  --embedding-dim <DIM>       Embedding vector dimension [default: 128]
+  --llm-provider <PROVIDER>   LLM provider for extraction: openai, anthropic, ollama, mock [default: mock]
+  --llm-api-key <KEY>         API key for the LLM provider (overrides env var)
+  --llm-model <MODEL>         Model name override for the LLM provider
+  -h, --help                  Print help
 ```
 
-## Available Tools
+### Environment Variables
 
-### store_memory
+| Variable | Description |
+|----------|-------------|
+| `MENTEDB_LLM_API_KEY` | Default API key for LLM extraction (also read by `--llm-api-key`) |
+| `OPENAI_API_KEY` | Fallback API key when using the OpenAI provider |
+| `RUST_LOG` | Logging filter, e.g. `RUST_LOG=mentedb_mcp=debug` |
 
-Store a new memory in MenteDB.
+The server writes logs to both stderr (for MCP clients) and a rolling file at `<data-dir>/mentedb-mcp.log`.
 
-**Parameters:**
-- `content` (string, required): The text content of the memory
-- `memory_type` (string, required): One of `episodic`, `semantic`, `procedural`, `anti_pattern`, `reasoning`, `correction`
-- `tags` (array of strings, optional): Tags for categorization
-- `metadata` (object, optional): Key value metadata
+## Resources
 
-**Returns:** The unique UUID of the stored memory.
+MCP resources provide read only access to server state.
 
-### recall_memory
+| URI | Type | Description |
+|-----|------|-------------|
+| `mentedb://stats` | Static | Database statistics: version, memory count, operational status |
+| `mentedb://memories` | Static | JSON listing of all available tools with names and descriptions |
+| `mentedb://memories/{id}` | Template | Full memory content by UUID via direct database lookup |
+| `mentedb://cognitive/state` | Template | Cognitive state snapshot: pain signals, phantoms, trajectory |
 
-Recall a specific memory by its UUID.
+## Architecture
 
-**Parameters:**
-- `id` (string, required): The UUID of the memory
+The server runs on stdio transport using the [rmcp](https://crates.io/crates/rmcp) framework. It is backed by the MenteDB engine, which is composed of 13 Rust crates covering storage, indexing, graph, context assembly, consolidation, cognitive systems, embedding, and extraction. Cognitive subsystems (pain registry, phantom tracker, trajectory tracker) are initialized at startup and maintained in memory for the lifetime of the server process.
 
-**Returns:** Memory content, type, metadata, and timestamps.
+## Links
 
-### search_memories
-
-Search memories by semantic similarity.
-
-**Parameters:**
-- `query` (string, required): The search query text
-- `limit` (number, optional): Maximum results to return (default: 10)
-- `memory_type` (string, optional): Filter by memory type
-
-**Returns:** Array of matching memories with relevance scores.
-
-### relate_memories
-
-Create a typed relationship edge between two memories.
-
-**Parameters:**
-- `from_id` (string, required): UUID of the source memory
-- `to_id` (string, required): UUID of the target memory
-- `edge_type` (string, required): One of `caused`, `before`, `related`, `contradicts`, `supports`, `supersedes`, `derived`, `part_of`
-
-**Returns:** Confirmation with edge details.
-
-### forget_memory
-
-Delete a memory from the database.
-
-**Parameters:**
-- `id` (string, required): UUID of the memory to delete
-- `reason` (string, optional): Reason for deletion
-
-**Returns:** Confirmation.
-
-### assemble_context
-
-Assemble an optimized context window from memories for a given query and token budget.
-
-**Parameters:**
-- `query` (string, required): The query to assemble context for
-- `token_budget` (number, required): Maximum token budget
-- `format` (string, optional): Output format, one of `structured`, `compact`, `delta`
-
-**Returns:** Assembled context optimized for LLM consumption.
-
-### get_stats
-
-Get database statistics.
-
-**Parameters:** None.
-
-**Returns:** Memory count, edge count, and type breakdown.
-
-### register_entity
-
-Register an entity for phantom memory detection. Phantom memories represent knowledge gaps
-the agent should fill.
-
-**Parameters:**
-- `name` (string, required): Name of the entity
-- `entity_type` (string, required): Type classification (e.g. person, tool, concept)
-
-**Returns:** Confirmation.
-
-### get_cognitive_state
-
-Get the current cognitive state of the database.
-
-**Parameters:** None.
-
-**Returns:** Pain signals, phantom memories (knowledge gaps), and trajectory predictions.
-
-## Available Resources
-
-| URI | Description |
-|-----|-------------|
-| `mentedb://memories` | List all memory IDs |
-| `mentedb://memories/{id}` | Access a specific memory by UUID |
-| `mentedb://stats` | Database statistics |
-
-## Usage Examples
-
-An AI agent might use the tools in a conversation like this:
-
-```
-Agent: I'll store what we just learned about the deployment process.
-
-[calls store_memory]
-  content: "Production deployments require approval from two reviewers and must pass all CI checks before merge."
-  memory_type: "procedural"
-  tags: ["deployment", "ci", "process"]
-
-Agent: The memory was stored with ID abc123...
-
-Agent: Let me search for anything related to our CI pipeline.
-
-[calls search_memories]
-  query: "CI pipeline configuration"
-  limit: 5
-
-Agent: Found 3 relevant memories...
-
-Agent: These two memories contradict each other, let me record that.
-
-[calls relate_memories]
-  from_id: "abc123..."
-  to_id: "def456..."
-  edge_type: "contradicts"
-
-Agent: Let me check if there are any knowledge gaps I should address.
-
-[calls get_cognitive_state]
-
-Agent: The cognitive engine detected a phantom memory for "staging environment",
-meaning we reference it but have no stored knowledge about it.
-```
-
-## MenteDB
-
-MenteDB is a purpose built database engine for AI agent memory. It provides cognitive features
-including interference detection, pain signals, phantom memory tracking, speculative context
-pre-assembly, stream cognition, trajectory tracking, and write time inference.
-
-Source: [github.com/nambok/mentedb](https://github.com/nambok/mentedb)
+- [MenteDB Engine](https://github.com/nambok/mentedb) — the core database (13 crates)
+- [MenteDB Site](https://github.com/nambok/mentedb-site) — landing page
+- [crates.io](https://crates.io/crates/mentedb-mcp)
 
 ## License
 
-Apache 2.0
+Apache-2.0

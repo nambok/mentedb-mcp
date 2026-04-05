@@ -1,6 +1,6 @@
 [package]
 name = "mentedb-mcp"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 license = "Apache-2.0"
 description = "MCP server for MenteDB, the cognition aware database for AI agent memory"

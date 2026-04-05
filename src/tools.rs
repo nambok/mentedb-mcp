@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use mentedb::MenteDb;
-use mentedb_cognitive::{
-    CognitionStream, InterferenceDetector, PainRegistry, PainSignal, PhantomConfig,
-    PhantomTracker, StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
-};
 use mentedb_cognitive::trajectory::DecisionState;
-use mentedb_core::types::{AgentId, MemoryId};
+use mentedb_cognitive::{
+    CognitionStream, InterferenceDetector, PainRegistry, PainSignal, PhantomConfig, PhantomTracker,
+    StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
+};
 use mentedb_consolidation::{
     ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
     DecayEngine, FactExtractor, ForgetEngine, ForgetRequest, MemoryCompressor,
@@ -14,6 +13,7 @@ use mentedb_consolidation::{
 use mentedb_context::{AssemblyConfig, ContextAssembler, OutputFormat, ScoredMemory};
 use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
+use mentedb_core::types::{AgentId, MemoryId};
 use mentedb_core::{MemoryEdge, MemoryNode};
 use mentedb_embedding::HashEmbeddingProvider;
 use mentedb_embedding::provider::EmbeddingProvider;
@@ -120,7 +120,9 @@ pub struct IngestConversationRequest {
     pub provider: Option<String>,
     #[schemars(description = "API key for the LLM provider (uses env var if not provided)")]
     pub api_key: Option<String>,
-    #[schemars(description = "Optional agent UUID that owns extracted memories (defaults to nil UUID)")]
+    #[schemars(
+        description = "Optional agent UUID that owns extracted memories (defaults to nil UUID)"
+    )]
     pub agent_id: Option<String>,
 }
 
@@ -152,7 +154,9 @@ pub struct CompressMemoryRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvaluateArchivalRequest {
-    #[schemars(description = "Salience threshold below which memories are candidates for archival (default: 0.1)")]
+    #[schemars(
+        description = "Salience threshold below which memories are candidates for archival (default: 0.1)"
+    )]
     pub salience_threshold: Option<f32>,
     #[schemars(description = "Maximum age in days before considering archival (default: 7)")]
     pub max_age_days: Option<u64>,
@@ -405,22 +409,17 @@ fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
 /// Workaround until MenteDb exposes a public get_by_id method.
 fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
     match db.recall("RECALL memories LIMIT 10000") {
-        Ok(window) => window
-            .blocks
-            .into_iter()
-            .flat_map(|b| b.memories)
-            .collect(),
+        Ok(window) => window.blocks.into_iter().flat_map(|b| b.memories).collect(),
         Err(_) => Vec::new(),
     }
 }
 
 /// Find a specific memory by UUID using a broad recall scan.
-fn find_memory_by_id(
-    db: &mut MenteDb,
-    target_id: Uuid,
-) -> Result<Option<ScoredMemory>, String> {
+fn find_memory_by_id(db: &mut MenteDb, target_id: Uuid) -> Result<Option<ScoredMemory>, String> {
     let all = recall_all_memories(db);
-    Ok(all.into_iter().find(|sm| sm.memory.id == MemoryId(target_id)))
+    Ok(all
+        .into_iter()
+        .find(|sm| sm.memory.id == MemoryId(target_id)))
 }
 
 /// Store extraction results (accepted + contradictions) into the database.
@@ -433,12 +432,16 @@ fn store_extraction_results(
     let mut stored_ids = Vec::new();
 
     for memory in &result.to_store {
-        let mem_type =
-            mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+        let mem_type = mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
         let embedding = embedding_provider
             .embed(&memory.content)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let mut node = MemoryNode::new(AgentId(agent_id), mem_type, memory.content.clone(), embedding);
+        let mut node = MemoryNode::new(
+            AgentId(agent_id),
+            mem_type,
+            memory.content.clone(),
+            embedding,
+        );
         node.tags = memory.tags.clone();
         let id = node.id;
         if let Err(e) = db.store(node) {
@@ -449,12 +452,16 @@ fn store_extraction_results(
     }
 
     for (memory, _findings) in &result.contradictions {
-        let mem_type =
-            mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+        let mem_type = mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
         let embedding = embedding_provider
             .embed(&memory.content)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let mut node = MemoryNode::new(AgentId(agent_id), mem_type, memory.content.clone(), embedding);
+        let mut node = MemoryNode::new(
+            AgentId(agent_id),
+            mem_type,
+            memory.content.clone(),
+            embedding,
+        );
         node.tags = memory.tags.clone();
         node.tags.push("has_contradiction".to_string());
         let id = node.id;
@@ -893,10 +900,7 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<IngestConversationRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let provider_name = req
-            .provider
-            .as_deref()
-            .unwrap_or(&self.config.llm_provider);
+        let provider_name = req.provider.as_deref().unwrap_or(&self.config.llm_provider);
         let api_key = req
             .api_key
             .or_else(|| self.config.llm_api_key.clone())
@@ -1462,7 +1466,11 @@ impl MenteDbServer {
             })
             .collect();
 
-        tracing::info!(count = items.len(), turn_id = turn_id, "phantom detection complete");
+        tracing::info!(
+            count = items.len(),
+            turn_id = turn_id,
+            "phantom detection complete"
+        );
         Ok(CallToolResult::success(vec![Content::text(
             json!({ "phantoms": items, "count": items.len() }).to_string(),
         )]))
@@ -1518,7 +1526,11 @@ impl MenteDbServer {
         let mut tracker = self.trajectory_tracker.lock().await;
         tracker.record_turn(node);
         let trajectory_len = tracker.get_trajectory().len();
-        tracing::info!(turn_id = req.turn_id, trajectory_len, "trajectory turn recorded");
+        tracing::info!(
+            turn_id = req.turn_id,
+            trajectory_len,
+            "trajectory turn recorded"
+        );
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({

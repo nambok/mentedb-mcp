@@ -162,7 +162,7 @@ Call `process_turn` on EVERY conversation turn. This is the core memory loop:
   - Searches for relevant past context via semantic similarity
   - Stores the conversation as searchable episodic memory
   - Runs write-time inference (contradiction detection, edge creation, confidence updates)
-  - Extracts structured facts (subject-predicate-object)
+  - Extracts structured facts (subject-predicate-object) and links them as edges
   - Detects phantom entities (things referenced but not in memory)
   - Checks your response against known facts for contradictions
   - Tracks conversation trajectory and predicts next topics
@@ -276,24 +276,51 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
 }
 
 fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
+    let version_marker = format!(
+        "<!-- mentedb-instructions-v{} -->",
+        env!("CARGO_PKG_VERSION")
+    );
+
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        if content.contains("MenteDB") {
+        if content.contains(&version_marker) {
             println!(
-                "  [skip] instructions already contain MenteDB: {}",
+                "  [skip] instructions already up-to-date: {}",
                 path.display()
             );
             return Ok(());
         }
-        let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
-        use std::io::Write;
-        write!(file, "\n{AGENT_INSTRUCTIONS}")?;
+        // Remove old MenteDB instructions block if present
+        let cleaned = if content.contains("# Memory\n\nYou have persistent memory via MenteDB") {
+            let start = content
+                .find("# Memory\n\nYou have persistent memory via MenteDB")
+                .unwrap();
+            // Find the end — look for next top-level heading or end of file
+            let rest = &content[start..];
+            let end = rest
+                .find("\n# ")
+                .map(|i| start + i)
+                .unwrap_or(content.len());
+            // Also remove any old version marker
+            let prefix = content[..start].trim_end().to_string();
+            let suffix = content[end..].to_string();
+            format!("{prefix}\n{suffix}")
+        } else {
+            content
+        };
+
+        let updated = format!(
+            "{}\n\n{version_marker}\n{AGENT_INSTRUCTIONS}",
+            cleaned.trim_end()
+        );
+        std::fs::write(path, updated)?;
         println!(
-            "  [updated] appended MenteDB instructions: {}",
+            "  [updated] refreshed MenteDB instructions: {}",
             path.display()
         );
     } else {
-        write_if_missing(path, AGENT_INSTRUCTIONS, "agent instructions")?;
+        let content = format!("{version_marker}\n{AGENT_INSTRUCTIONS}");
+        write_if_missing(path, &content, "agent instructions")?;
     }
     Ok(())
 }

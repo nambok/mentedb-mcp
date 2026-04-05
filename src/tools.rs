@@ -1546,7 +1546,7 @@ impl MenteDbServer {
     // -- Process Turn (automatic memory pipeline) --
 
     #[rmcp::tool(
-        description = "Process a single conversation turn through the full memory pipeline. Stores the conversation as episodic memory, searches for relevant context, runs write-time inference (contradiction detection, edge creation, confidence updates), extracts facts, detects phantom entities, checks the assistant response against known facts, tracks trajectory, and runs periodic maintenance (decay, archival, consolidation). Call this once per turn. Returns context, pain warnings, inference actions, contradiction alerts, phantom count, and topic predictions."
+        description = "MANDATORY: Call this tool on EVERY conversation turn. This is the core memory loop — without it, nothing is remembered. Searches for relevant context, stores the conversation as episodic memory, runs write-time inference (contradiction detection, edge creation, confidence updates), extracts and links facts, detects phantom entities, checks the response against known facts, tracks trajectory, and runs periodic maintenance. Returns retrieved context, stored memory IDs, inference results, contradictions, phantoms, and predictions."
     )]
     async fn process_turn(
         &self,
@@ -1757,15 +1757,43 @@ impl MenteDbServer {
                 );
             }
 
-            // 4b. Extract facts from the new memory
+            // 4b. Extract facts from the new memory and store as edges
             let extractor = FactExtractor::new();
             if let Some(target) = all_nodes.iter().find(|m| m.id == id) {
                 let facts = extractor.extract_facts(target);
+                let now_facts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+                for fact in &facts {
+                    // Store SPO facts as Related edges between the memory and any matching memories
+                    for other in &all_nodes {
+                        if other.id != id
+                            && (other.content.contains(&fact.subject)
+                                || other.content.contains(&fact.object))
+                        {
+                            let edge = MemoryEdge {
+                                source: id,
+                                target: other.id,
+                                edge_type: EdgeType::Related,
+                                weight: 0.5,
+                                created_at: now_facts,
+                            };
+                            let _ = db.relate(edge);
+                        }
+                    }
+                }
                 if !facts.is_empty() {
-                    tracing::info!(facts = facts.len(), "extracted facts from new memory");
+                    tracing::info!(
+                        facts = facts.len(),
+                        "extracted and linked facts from new memory"
+                    );
                 }
             }
         }
+
+        // Drop db lock before auto-maintenance to prevent deadlock
+        drop(db);
 
         // 4c. Detect phantom entities in the conversation
         let mut phantom_tracker = self.phantom_tracker.lock().await;
@@ -2646,62 +2674,32 @@ impl ServerHandler for MenteDbServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "MenteDB is your persistent memory. Use it proactively, not just when asked.\n\
+            "MenteDB is your persistent memory. You MUST use it on every conversation turn.\n\
              \n\
-             PREFERRED: PROCESS_TURN (simplest approach)\n\
-             - Call process_turn once per conversation turn with user_message and assistant_response.\n\
-             - It handles everything: searches relevant context, extracts memories, stores them, \
-             runs write-time inference, checks pain signals, and tracks the conversation trajectory.\n\
-             - Returns relevant_context (prior memories), stored memory IDs, pain warnings, \
-             and predicted next topics, all in one response.\n\
+             REQUIRED: CALL process_turn ON EVERY TURN\n\
+             - You MUST call process_turn once per conversation turn with user_message and assistant_response.\n\
+             - This is not optional. Without it, nothing is remembered across turns or sessions.\n\
+             - It handles everything: searches relevant context, stores episodic memory, \
+             runs write-time inference, extracts and links facts, detects phantoms, checks for contradictions, \
+             and tracks the conversation trajectory.\n\
+             - Returns relevant_context (prior memories), stored memory IDs, inference results, \
+             contradictions, phantoms, and predicted next topics.\n\
              - Use project_context to soft-tag memories with the current project/workspace.\n\
              \n\
-             MANUAL TOOLS (for specific needs):\n\
-             \n\
-             WHEN TO STORE:\n\
-             - After learning a user preference, decision, or project detail, call store_memory.\n\
+             ALSO REQUIRED: CALL store_memory FOR IMPORTANT FACTS\n\
+             - You are the extraction engine. When you notice preferences, decisions, corrections, \
+             or procedures in the conversation, call store_memory immediately.\n\
              - Use memory_type 'semantic' for facts, 'episodic' for events, 'procedural' for how-to \
              knowledge, 'correction' when the user corrects you, 'anti_pattern' for mistakes to avoid.\n\
              - Add descriptive tags (e.g. ['project-x', 'database', 'decision']) for better retrieval.\n\
-             - Include relevant metadata as key-value pairs for structured data.\n\
              \n\
-             WHEN TO SEARCH:\n\
-             - At the start of a conversation or task, call search_memories with relevant keywords \
-             to load context from prior sessions.\n\
-             - Before answering questions about past decisions, preferences, or project details.\n\
-             - When the user references something you discussed before.\n\
-             \n\
-             WHEN TO RELATE:\n\
-             - When a fact changes, store the new fact and call relate_memories with edge_type \
-             'supersedes' from the new memory to the old one.\n\
-             - Use 'contradicts' when two memories conflict.\n\
-             - Use 'supports' when one memory reinforces another.\n\
-             - Use 'caused' or 'before' for causal or temporal chains.\n\
-             - Use 'part_of' for hierarchical relationships.\n\
-             \n\
-             WHEN TO FORGET:\n\
-             - When the user explicitly asks you to forget something.\n\
-             - When information is confirmed wrong, call forget_memory with a reason.\n\
-             - When the user asks to 'reset', 'clear everything', or 'start fresh', call forget_all with confirm='CONFIRM'.\n\
-             \n\
-             COGNITIVE FEATURES (use when appropriate):\n\
-             - record_pain: When something went wrong (bad advice, failed approach), record it so you \
-             can warn about similar situations in the future.\n\
-             - record_trajectory + predict_topics: Track conversation flow to anticipate what the user \
-             needs next.\n\
-             - write_inference: After storing important memories, run this to auto-detect contradictions \
-             and suggest edges.\n\
-             - detect_phantoms: When processing text that references unknown entities, scan for \
-             knowledge gaps.\n\
-             - assemble_context: When you need to build a focused context window from many memories, \
-             specify a query and token budget.\n\
-             \n\
-             MAINTENANCE (run periodically or when asked):\n\
-             - consolidate_memories: Merge similar memories to reduce clutter.\n\
-             - apply_decay: Age out stale memories by reducing salience.\n\
-             - evaluate_archival: Review memories for cleanup.\n\
-             - get_cognitive_state: Check for active pain signals, knowledge gaps, and predictions.\n\
-             - get_stats: Quick overview of database size and health.",
+             OTHER TOOLS (use when appropriate):\n\
+             - search_memories: Look up specific past context outside of process_turn.\n\
+             - relate_memories: Link memories with edges (supersedes, contradicts, supports, caused, part_of).\n\
+             - forget_memory / forget_all: When user asks to forget something.\n\
+             - record_pain: When something went wrong, record it for future warnings.\n\
+             - get_cognitive_state: Check for active pain signals and knowledge gaps.\n\
+             - assemble_context: Build a focused context window from many memories with a token budget.",
         )
     }
 

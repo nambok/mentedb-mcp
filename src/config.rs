@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 /// Server configuration parsed from CLI arguments and environment.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ServerConfig {
     /// Path to the MenteDB data directory.
     pub data_dir: PathBuf,

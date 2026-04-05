@@ -20,6 +20,9 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let db = MenteDb::open(Path::new(&config.data_dir))?;
     let server = MenteDbServer::new(db, config);
 
+    // Keep a reference to the DB for graceful shutdown
+    let db_ref = server.db_ref();
+
     tracing::info!("Starting MCP server on stdio transport");
 
     let service = server.serve(stdio()).await.inspect_err(|e| {
@@ -27,6 +30,15 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     })?;
 
     service.waiting().await?;
+
+    // Graceful shutdown: flush indexes, graph, and WAL to disk
+    tracing::info!("Shutting down — flushing database to disk");
+    let mut db = db_ref.lock().await;
+    if let Err(e) = db.close() {
+        tracing::error!(error = %e, "Failed to close database cleanly");
+    } else {
+        tracing::info!("Database closed cleanly");
+    }
 
     tracing::info!("MCP server shut down");
     Ok(())

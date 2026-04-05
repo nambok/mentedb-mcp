@@ -388,6 +388,11 @@ impl MenteDbServer {
             tool_router: Self::tool_router(),
         }
     }
+
+    /// Get a reference to the database for shutdown handling.
+    pub fn db_ref(&self) -> Arc<Mutex<MenteDb>> {
+        Arc::clone(&self.db)
+    }
 }
 
 fn parse_memory_type(s: &str) -> Result<MemoryType, String> {

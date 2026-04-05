@@ -17,10 +17,12 @@ path = "src/main.rs"
 rmcp = { version = "1", features = ["server", "transport-io"] }
 mentedb = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-core = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-graph = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-cognitive = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-context = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-embedding = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-extraction = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-consolidation = { git = "https://github.com/nambok/mentedb", branch = "main" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

@@ -672,11 +672,9 @@ impl MenteDbServer {
         match db.recall_similar(&embedding, fetch_k) {
             Ok(results) => {
                 tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
-                // Retrieve full memory data via broad recall for content enrichment
-                let all_memories = recall_all_memories(&mut db);
                 let mut items: Vec<serde_json::Value> = Vec::new();
                 for (id, score) in &results {
-                    if let Some(mem) = all_memories.iter().find(|sm| sm.memory.id == *id) {
+                    if let Ok(Some(mem)) = find_memory_by_id(&mut db, id.0) {
                         if let Some(ref tf) = type_filter
                             && mem.memory.memory_type != *tf
                         {
@@ -691,9 +689,8 @@ impl MenteDbServer {
                             "salience": mem.memory.salience,
                         }));
                     } else {
-                        // Memory not in recall window; include with limited info
                         if type_filter.is_some() {
-                            continue; // can't verify type, skip
+                            continue;
                         }
                         items.push(json!({ "id": id.to_string(), "score": score }));
                     }
@@ -863,16 +860,14 @@ impl MenteDbServer {
         let mut db = self.db.lock().await;
         match db.recall_similar(&embedding, 50) {
             Ok(results) => {
-                // Fetch full memory data for scored memories
-                let all_memories = recall_all_memories(&mut db);
                 let scored_memories: Vec<ScoredMemory> = results
                     .iter()
                     .filter_map(|(id, score)| {
-                        all_memories
-                            .iter()
-                            .find(|sm| sm.memory.id == *id)
+                        find_memory_by_id(&mut db, id.0)
+                            .ok()
+                            .flatten()
                             .map(|sm| ScoredMemory {
-                                memory: sm.memory.clone(),
+                                memory: sm.memory,
                                 score: *score,
                             })
                     })
@@ -1447,6 +1442,32 @@ impl MenteDbServer {
                 let extractor = FactExtractor::new();
                 let facts = extractor.extract_facts(&sm.memory);
 
+                // Store extracted facts as Related edges to matching memories
+                let all_memories = recall_all_memories(&mut db);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+                let mut edges_created = 0u32;
+                for fact in &facts {
+                    for other in &all_memories {
+                        if other.memory.id != sm.memory.id
+                            && (other.memory.content.contains(&fact.subject)
+                                || other.memory.content.contains(&fact.object))
+                        {
+                            let edge = MemoryEdge {
+                                source: sm.memory.id,
+                                target: other.memory.id,
+                                edge_type: EdgeType::Related,
+                                weight: 0.5,
+                                created_at: now,
+                            };
+                            let _ = db.relate(edge);
+                            edges_created += 1;
+                        }
+                    }
+                }
+
                 let facts_json: Vec<serde_json::Value> = facts
                     .iter()
                     .map(|f| {
@@ -1460,12 +1481,13 @@ impl MenteDbServer {
                     })
                     .collect();
 
-                tracing::info!(id = %id, facts_count = facts.len(), "facts extracted");
+                tracing::info!(id = %id, facts_count = facts.len(), edges_created, "facts extracted and linked");
 
                 Ok(CallToolResult::success(vec![Content::text(
                     json!({
                         "id": id.to_string(),
                         "facts_count": facts.len(),
+                        "edges_created": edges_created,
                         "facts": facts_json,
                     })
                     .to_string(),
@@ -2310,60 +2332,108 @@ impl MenteDbServer {
         let engine = WriteInferenceEngine::new();
         let actions = engine.infer_on_write(&target_memory, &existing, &[]);
 
-        let items: Vec<serde_json::Value> = actions
-            .iter()
-            .map(|a| match a {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let mut applied = 0u32;
+        let mut items: Vec<serde_json::Value> = Vec::new();
+        for action in &actions {
+            match action {
                 mentedb_cognitive::InferredAction::FlagContradiction {
-                    existing,
+                    existing: ex,
                     new,
                     reason,
-                } => json!({
-                    "action": "flag_contradiction",
-                    "existing_memory": existing.to_string(),
-                    "new_memory": new.to_string(),
-                    "reason": reason,
-                }),
+                } => {
+                    let edge = MemoryEdge {
+                        source: *new,
+                        target: *ex,
+                        edge_type: EdgeType::Contradicts,
+                        weight: 1.0,
+                        created_at: now,
+                    };
+                    let _ = db.relate(edge);
+                    applied += 1;
+                    items.push(json!({
+                        "action": "flag_contradiction",
+                        "existing_memory": ex.to_string(),
+                        "new_memory": new.to_string(),
+                        "reason": reason,
+                    }));
+                }
                 mentedb_cognitive::InferredAction::MarkObsolete {
                     memory,
                     superseded_by,
-                } => json!({
-                    "action": "mark_obsolete",
-                    "memory": memory.to_string(),
-                    "superseded_by": superseded_by.to_string(),
-                }),
+                } => {
+                    let edge = MemoryEdge {
+                        source: *superseded_by,
+                        target: *memory,
+                        edge_type: EdgeType::Supersedes,
+                        weight: 1.0,
+                        created_at: now,
+                    };
+                    let _ = db.relate(edge);
+                    applied += 1;
+                    items.push(json!({
+                        "action": "mark_obsolete",
+                        "memory": memory.to_string(),
+                        "superseded_by": superseded_by.to_string(),
+                    }));
+                }
                 mentedb_cognitive::InferredAction::CreateEdge {
                     source,
                     target,
                     edge_type,
                     weight,
-                } => json!({
-                    "action": "create_edge",
-                    "source": source.to_string(),
-                    "target": target.to_string(),
-                    "edge_type": format!("{:?}", edge_type),
-                    "weight": weight,
-                }),
+                } => {
+                    let edge = MemoryEdge {
+                        source: *source,
+                        target: *target,
+                        edge_type: *edge_type,
+                        weight: *weight,
+                        created_at: now,
+                    };
+                    let _ = db.relate(edge);
+                    applied += 1;
+                    items.push(json!({
+                        "action": "create_edge",
+                        "source": source.to_string(),
+                        "target": target.to_string(),
+                        "edge_type": format!("{:?}", edge_type),
+                        "weight": weight,
+                    }));
+                }
                 mentedb_cognitive::InferredAction::UpdateConfidence {
                     memory,
                     new_confidence,
-                } => json!({
-                    "action": "update_confidence",
-                    "memory": memory.to_string(),
-                    "new_confidence": new_confidence,
-                }),
+                } => {
+                    if let Some(mut mem) =
+                        existing.iter().find(|m| m.id == *memory).cloned()
+                    {
+                        mem.confidence = *new_confidence;
+                        let _ = db.store(mem);
+                        applied += 1;
+                    }
+                    items.push(json!({
+                        "action": "update_confidence",
+                        "memory": memory.to_string(),
+                        "new_confidence": new_confidence,
+                    }));
+                }
                 mentedb_cognitive::InferredAction::PropagateBeliefChange { root, delta } => {
-                    json!({
+                    items.push(json!({
                         "action": "propagate_belief_change",
                         "root": root.to_string(),
                         "delta": delta,
-                    })
+                    }));
                 }
-            })
-            .collect();
+            }
+        }
 
-        tracing::info!(memory_id = %target_id, actions = items.len(), "write inference complete");
+        tracing::info!(memory_id = %target_id, actions = items.len(), applied, "write inference complete");
         Ok(CallToolResult::success(vec![Content::text(
-            json!({ "inferred_actions": items, "count": items.len() }).to_string(),
+            json!({ "inferred_actions": items, "count": items.len(), "applied": applied }).to_string(),
         )]))
     }
 

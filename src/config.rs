@@ -7,13 +7,28 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
     /// Embedding vector dimension.
     pub embedding_dim: usize,
+    /// Default LLM provider for extraction (e.g. "mock", "openai", "anthropic", "ollama").
+    pub llm_provider: String,
+    /// Optional API key for the LLM provider.
+    pub llm_api_key: Option<String>,
+    /// Optional model name override for the LLM provider.
+    pub llm_model: Option<String>,
 }
 
 impl ServerConfig {
-    pub fn new(data_dir: PathBuf, embedding_dim: usize) -> Self {
+    pub fn new(
+        data_dir: PathBuf,
+        embedding_dim: usize,
+        llm_provider: String,
+        llm_api_key: Option<String>,
+        llm_model: Option<String>,
+    ) -> Self {
         Self {
             data_dir,
             embedding_dim,
+            llm_provider,
+            llm_api_key,
+            llm_model,
         }
     }
 

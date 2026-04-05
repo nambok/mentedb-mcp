@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.9](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.8...mentedb-mcp-v0.2.9) (2026-04-05)
+
+
+### Bug Fixes
+
+* deadlock in process_turn, strengthen mandatory instructions, persist extracted facts ([566bab3](https://github.com/nambok/mentedb-mcp/commit/566bab3d0aec74ba3b5d905fc6b8572eee002b44))
+
 ## [0.2.8](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.7...mentedb-mcp-v0.2.8) (2026-04-05)
 
 

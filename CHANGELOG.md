@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.4](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.3...mentedb-mcp-v0.2.4) (2026-04-05)
+
+
+### Features
+
+* auto-maintenance in process_turn (decay/archival/consolidation) ([44f04cf](https://github.com/nambok/mentedb-mcp/commit/44f04cfe76040b8053bdd7ab7d644bc15074ab80))
+
+
+### Bug Fixes
+
+* persist all mutation tools (decay, archival, consolidation, compress, belief propagation) ([5065f6a](https://github.com/nambok/mentedb-mcp/commit/5065f6aa7dae63a90e786dca2617d3bcbae4b690))
+* rewrite agent instructions to use process_turn every turn ([9f77701](https://github.com/nambok/mentedb-mcp/commit/9f77701563cfb77a49bde0577f247719f4ad5051))
+
 ## [0.2.3](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.2...mentedb-mcp-v0.2.3) (2026-04-05)
 
 

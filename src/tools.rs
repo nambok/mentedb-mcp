@@ -2408,9 +2408,7 @@ impl MenteDbServer {
                     memory,
                     new_confidence,
                 } => {
-                    if let Some(mut mem) =
-                        existing.iter().find(|m| m.id == *memory).cloned()
-                    {
+                    if let Some(mut mem) = existing.iter().find(|m| m.id == *memory).cloned() {
                         mem.confidence = *new_confidence;
                         let _ = db.store(mem);
                         applied += 1;
@@ -2433,7 +2431,8 @@ impl MenteDbServer {
 
         tracing::info!(memory_id = %target_id, actions = items.len(), applied, "write inference complete");
         Ok(CallToolResult::success(vec![Content::text(
-            json!({ "inferred_actions": items, "count": items.len(), "applied": applied }).to_string(),
+            json!({ "inferred_actions": items, "count": items.len(), "applied": applied })
+                .to_string(),
         )]))
     }
 

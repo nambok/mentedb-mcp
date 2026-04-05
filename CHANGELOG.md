@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.5...mentedb-mcp-v0.2.6) (2026-04-05)
+
+
+### Bug Fixes
+
+* remove clone on Copy type (clippy) ([7b0339a](https://github.com/nambok/mentedb-mcp/commit/7b0339aa060975f8fe42d5a4c946d72b04f17bae))
+
 ## [0.2.5](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.4...mentedb-mcp-v0.2.5) (2026-04-05)
 
 

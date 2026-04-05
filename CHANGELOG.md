@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.7](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.6...mentedb-mcp-v0.2.7) (2026-04-05)
+
+
+### Features
+
+* wire cognitive tools into process_turn ([9e3d005](https://github.com/nambok/mentedb-mcp/commit/9e3d0057e8ace316f4afbaf996a8df724de26243))
+
 ## [0.2.6](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.5...mentedb-mcp-v0.2.6) (2026-04-05)
 
 

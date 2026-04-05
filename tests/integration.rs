@@ -401,13 +401,10 @@ fn test_process_turn() {
         }),
     );
 
-    assert!(result["turn_id"].as_u64().unwrap() == 1);
-    assert!(result["context"].is_object());
-    assert!(result["context"]["memories"].is_array());
-    assert!(result["memories_stored"].is_array());
+    assert!(result["ok"].as_bool().unwrap());
+    assert!(result["context"].is_array());
+    assert!(result["stored"].is_number());
     assert!(result["pain_warnings"].is_array());
-    assert!(result["predicted_topics"].is_array());
-    assert!(result["elapsed_ms"].is_number());
 }
 
 #[test]

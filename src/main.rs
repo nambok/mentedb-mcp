@@ -158,13 +158,23 @@ You have persistent memory via MenteDB. Use it automatically, never wait to be a
 Call `process_turn` on EVERY conversation turn. This is the core memory loop:
 - Pass the user's message and your response
 - Increment `turn_id` each turn (start at 0)
-- It automatically: searches relevant context, extracts and stores new memories, runs write-time inference (contradiction detection, edge suggestion), and returns pain warnings and topic predictions
+- It automatically: searches relevant context, stores the conversation as searchable episodic memory, runs pain/contradiction checks, and returns context + warnings
 
 On the FIRST turn, also call `get_cognitive_state` to check for active pain signals or knowledge gaps.
 
+## Store important facts yourself (MANDATORY)
+
+YOU are the extraction engine. When you notice important information in the conversation, call `store_memory` immediately:
+- **Preferences**: "User prefers Rust for backends" → type: semantic, tags: [preference]
+- **Decisions**: "Using PostgreSQL for the database" → type: semantic, tags: [decision, architecture]
+- **Corrections**: "Actually the deadline is April, not March" → type: correction
+- **Procedures**: "Deploy with: cargo build --release && scp ..." → type: procedural
+- **Mistakes**: "Never retag releases — always bump version" → type: anti_pattern
+
+Don't store noise or chitchat. Store facts, preferences, decisions, and corrections.
+
 ## When to use other tools
 
-- `store_memory`: For explicit facts the user states that you want to ensure are captured (preferences, corrections). Use descriptive tags.
 - `search_memories`: When you need to look up something specific outside of `process_turn`.
 - `record_pain`: When something goes wrong (bad advice, failed approach) so you can warn about it in the future.
 - `relate_memories`: When a fact changes, store the new fact and relate with `supersedes` pointing from new to old.
@@ -173,7 +183,7 @@ On the FIRST turn, also call `get_cognitive_state` to check for active pain sign
 ## Memory types
 
 - `semantic`: facts, decisions, preferences, project details (most common)
-- `episodic`: events, meetings, what happened
+- `episodic`: events, meetings, what happened (process_turn handles this)
 - `procedural`: how to do things, workflows, commands
 - `correction`: when the user corrects you
 - `anti_pattern`: mistakes to avoid

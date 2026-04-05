@@ -1541,7 +1541,7 @@ impl MenteDbServer {
     // -- Process Turn (automatic memory pipeline) --
 
     #[rmcp::tool(
-        description = "Process a single conversation turn through the full memory pipeline. Searches for relevant context, extracts memories from the exchange, stores them with embeddings, runs write-time inference, and tracks the conversation trajectory. Call this once per turn instead of orchestrating individual tools. Returns retrieved context, stored memory IDs, and any cognitive signals (contradictions, pain warnings, predictions)."
+        description = "Process a single conversation turn through the full memory pipeline. Stores the conversation as episodic memory, searches for relevant context, runs write-time inference (contradiction detection, edge creation, confidence updates), extracts facts, detects phantom entities, checks the assistant response against known facts, tracks trajectory, and runs periodic maintenance (decay, archival, consolidation). Call this once per turn. Returns context, pain warnings, inference actions, contradiction alerts, phantom count, and topic predictions."
     )]
     async fn process_turn(
         &self,
@@ -1667,15 +1667,13 @@ impl MenteDbServer {
         let mut inference_applied = 0u32;
         if !stored_ids.is_empty() {
             let all_memories = recall_all_memories(&mut db);
-            let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
+            let all_nodes: Vec<MemoryNode> =
+                all_memories.iter().map(|sm| sm.memory.clone()).collect();
 
             if let Some(target) = all_nodes.iter().find(|m| m.id == id) {
                 let engine = WriteInferenceEngine::new();
-                let existing: Vec<MemoryNode> = all_nodes
-                    .iter()
-                    .filter(|m| m.id != id)
-                    .cloned()
-                    .collect();
+                let existing: Vec<MemoryNode> =
+                    all_nodes.iter().filter(|m| m.id != id).cloned().collect();
                 let actions = engine.infer_on_write(target, &existing, &[]);
 
                 let now = std::time::SystemTime::now()
@@ -1685,7 +1683,11 @@ impl MenteDbServer {
 
                 for action in &actions {
                     match action {
-                        mentedb_cognitive::InferredAction::FlagContradiction { existing, new, .. } => {
+                        mentedb_cognitive::InferredAction::FlagContradiction {
+                            existing,
+                            new,
+                            ..
+                        } => {
                             let edge = MemoryEdge {
                                 source: *new,
                                 target: *existing,
@@ -1696,7 +1698,10 @@ impl MenteDbServer {
                             let _ = db.relate(edge);
                             inference_applied += 1;
                         }
-                        mentedb_cognitive::InferredAction::MarkObsolete { memory, superseded_by } => {
+                        mentedb_cognitive::InferredAction::MarkObsolete {
+                            memory,
+                            superseded_by,
+                        } => {
                             let edge = MemoryEdge {
                                 source: *superseded_by,
                                 target: *memory,
@@ -1707,7 +1712,12 @@ impl MenteDbServer {
                             let _ = db.relate(edge);
                             inference_applied += 1;
                         }
-                        mentedb_cognitive::InferredAction::CreateEdge { source, target, edge_type, weight } => {
+                        mentedb_cognitive::InferredAction::CreateEdge {
+                            source,
+                            target,
+                            edge_type,
+                            weight,
+                        } => {
                             let edge = MemoryEdge {
                                 source: *source,
                                 target: *target,
@@ -1718,8 +1728,13 @@ impl MenteDbServer {
                             let _ = db.relate(edge);
                             inference_applied += 1;
                         }
-                        mentedb_cognitive::InferredAction::UpdateConfidence { memory, new_confidence } => {
-                            if let Some(mut mem) = all_nodes.iter().find(|m| m.id == *memory).cloned() {
+                        mentedb_cognitive::InferredAction::UpdateConfidence {
+                            memory,
+                            new_confidence,
+                        } => {
+                            if let Some(mut mem) =
+                                all_nodes.iter().find(|m| m.id == *memory).cloned()
+                            {
                                 mem.confidence = *new_confidence;
                                 let _ = db.store(mem);
                                 inference_applied += 1;
@@ -1730,12 +1745,17 @@ impl MenteDbServer {
                         }
                     }
                 }
-                tracing::info!(actions = actions.len(), applied = inference_applied, "write inference on new memory");
+                tracing::info!(
+                    actions = actions.len(),
+                    applied = inference_applied,
+                    "write inference on new memory"
+                );
             }
 
             // 4b. Extract facts from the new memory
             let extractor = FactExtractor::new();
-            if let Some(target) = all_nodes.iter().find(|m| m.id == id) {                let facts = extractor.extract_facts(target);
+            if let Some(target) = all_nodes.iter().find(|m| m.id == id) {
+                let facts = extractor.extract_facts(target);
                 if !facts.is_empty() {
                     tracing::info!(facts = facts.len(), "extracted facts from new memory");
                 }
@@ -1803,10 +1823,7 @@ impl MenteDbServer {
         };
         let mut tracker = self.trajectory_tracker.lock().await;
         tracker.record_turn(node);
-        let predictions: Vec<String> = tracker
-            .predict_next_topics()
-            .into_iter()
-            .collect();
+        let predictions: Vec<String> = tracker.predict_next_topics().into_iter().collect();
         drop(tracker);
 
         // ── Auto-maintenance (staggered) ──

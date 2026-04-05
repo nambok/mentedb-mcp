@@ -15,6 +15,7 @@ use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
 use mentedb_core::types::{AgentId, MemoryId};
 use mentedb_core::{MemoryEdge, MemoryNode};
+use mentedb_embedding::CandleEmbeddingProvider;
 use mentedb_embedding::HashEmbeddingProvider;
 use mentedb_embedding::provider::EmbeddingProvider;
 use mentedb_extraction::{
@@ -314,7 +315,7 @@ fn parse_decision_state(s: &str) -> DecisionState {
 /// MenteDB MCP server state holding the database and cognitive subsystems.
 pub struct MenteDbServer {
     db: Arc<Mutex<MenteDb>>,
-    embedding_provider: Arc<HashEmbeddingProvider>,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
     pain_registry: Arc<Mutex<PainRegistry>>,
     phantom_tracker: Arc<Mutex<PhantomTracker>>,
     trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
@@ -326,7 +327,23 @@ pub struct MenteDbServer {
 
 impl MenteDbServer {
     pub fn new(db: MenteDb, config: ServerConfig) -> Self {
-        let embedding_provider = Arc::new(HashEmbeddingProvider::new(config.embedding_dim));
+        let embedding_provider: Arc<dyn EmbeddingProvider> = match CandleEmbeddingProvider::new() {
+            Ok(provider) => {
+                tracing::info!(
+                    model = provider.model_name(),
+                    dimensions = provider.dimensions(),
+                    "Using local Candle embeddings"
+                );
+                Arc::new(provider)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to load Candle model, falling back to hash embeddings"
+                );
+                Arc::new(HashEmbeddingProvider::new(config.embedding_dim))
+            }
+        };
         Self {
             db: Arc::new(Mutex::new(db)),
             embedding_provider,
@@ -426,7 +443,7 @@ fn find_memory_by_id(db: &mut MenteDb, target_id: Uuid) -> Result<Option<ScoredM
 fn store_extraction_results(
     result: &ProcessedExtractionResult,
     db: &mut MenteDb,
-    embedding_provider: &HashEmbeddingProvider,
+    embedding_provider: &dyn EmbeddingProvider,
     agent_id: Uuid,
 ) -> Result<Vec<String>, McpError> {
     let mut stored_ids = Vec::new();
@@ -996,7 +1013,7 @@ impl MenteDbServer {
 
         let mut db = self.db.lock().await;
         let stored_ids =
-            store_extraction_results(&result, &mut db, &self.embedding_provider, agent_id)?;
+            store_extraction_results(&result, &mut db, self.embedding_provider.as_ref(), agent_id)?;
 
         let stats = &result.stats;
         tracing::info!(

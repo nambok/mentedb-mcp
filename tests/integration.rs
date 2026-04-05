@@ -405,6 +405,10 @@ fn test_process_turn() {
     assert!(result["context"].is_array());
     assert!(result["stored"].is_number());
     assert!(result["pain_warnings"].is_array());
+    assert!(result["inference_applied"].is_number());
+    assert!(result["contradictions"].is_number());
+    assert!(result["phantoms"].is_number());
+    assert!(result["predictions"].is_array());
 }
 
 #[test]

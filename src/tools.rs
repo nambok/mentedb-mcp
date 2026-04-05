@@ -1663,6 +1663,118 @@ impl MenteDbServer {
             }
         }
 
+        // 4. Write-time inference on the new memory (contradictions, edges, obsolescence)
+        let mut inference_applied = 0u32;
+        if !stored_ids.is_empty() {
+            let all_memories = recall_all_memories(&mut db);
+            let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
+
+            if let Some(target) = all_nodes.iter().find(|m| m.id == id) {
+                let engine = WriteInferenceEngine::new();
+                let existing: Vec<MemoryNode> = all_nodes
+                    .iter()
+                    .filter(|m| m.id != id)
+                    .cloned()
+                    .collect();
+                let actions = engine.infer_on_write(target, &existing, &[]);
+
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+
+                for action in &actions {
+                    match action {
+                        mentedb_cognitive::InferredAction::FlagContradiction { existing, new, .. } => {
+                            let edge = MemoryEdge {
+                                source: *new,
+                                target: *existing,
+                                edge_type: EdgeType::Contradicts,
+                                weight: 1.0,
+                                created_at: now,
+                            };
+                            let _ = db.relate(edge);
+                            inference_applied += 1;
+                        }
+                        mentedb_cognitive::InferredAction::MarkObsolete { memory, superseded_by } => {
+                            let edge = MemoryEdge {
+                                source: *superseded_by,
+                                target: *memory,
+                                edge_type: EdgeType::Supersedes,
+                                weight: 1.0,
+                                created_at: now,
+                            };
+                            let _ = db.relate(edge);
+                            inference_applied += 1;
+                        }
+                        mentedb_cognitive::InferredAction::CreateEdge { source, target, edge_type, weight } => {
+                            let edge = MemoryEdge {
+                                source: *source,
+                                target: *target,
+                                edge_type: *edge_type,
+                                weight: *weight,
+                                created_at: now,
+                            };
+                            let _ = db.relate(edge);
+                            inference_applied += 1;
+                        }
+                        mentedb_cognitive::InferredAction::UpdateConfidence { memory, new_confidence } => {
+                            if let Some(mut mem) = all_nodes.iter().find(|m| m.id == *memory).cloned() {
+                                mem.confidence = *new_confidence;
+                                let _ = db.store(mem);
+                                inference_applied += 1;
+                            }
+                        }
+                        mentedb_cognitive::InferredAction::PropagateBeliefChange { .. } => {
+                            // Handled by propagate_belief tool when called explicitly
+                        }
+                    }
+                }
+                tracing::info!(actions = actions.len(), applied = inference_applied, "write inference on new memory");
+            }
+
+            // 4b. Extract facts from the new memory
+            let extractor = FactExtractor::new();
+            if let Some(target) = all_nodes.iter().find(|m| m.id == id) {                let facts = extractor.extract_facts(target);
+                if !facts.is_empty() {
+                    tracing::info!(facts = facts.len(), "extracted facts from new memory");
+                }
+            }
+        }
+
+        // 4c. Detect phantom entities in the conversation
+        let mut phantom_tracker = self.phantom_tracker.lock().await;
+        let known: Vec<String> = context_items
+            .iter()
+            .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
+            .flat_map(|c| c.split_whitespace().map(|w| w.to_lowercase()))
+            .collect();
+        let phantoms = phantom_tracker.detect_gaps(&conversation, &known, req.turn_id);
+        let phantom_count = phantoms.len();
+        drop(phantom_tracker);
+
+        // 4d. Check assistant response against known context for contradictions
+        let known_facts: Vec<(MemoryId, String)> = context_items
+            .iter()
+            .filter_map(|ci| {
+                let id_str = ci.get("id").and_then(|v| v.as_str())?;
+                let content = ci.get("content").and_then(|v| v.as_str())?;
+                let uuid = parse_uuid(id_str).ok()?;
+                Some((MemoryId(uuid), content.to_string()))
+            })
+            .collect();
+        let stream_alerts = if !known_facts.is_empty() {
+            let stream = CognitionStream::with_config(StreamConfig::default());
+            stream.feed_token(&req.assistant_response);
+            stream.check_alerts(&known_facts)
+        } else {
+            vec![]
+        };
+        let contradiction_count = stream_alerts
+            .iter()
+            .filter(|a| matches!(a, mentedb_cognitive::StreamAlert::Contradiction { .. }))
+            .count();
+
         // 5. Record trajectory
         let decision_state = if stored_ids.is_empty() {
             DecisionState::Investigating
@@ -1691,7 +1803,10 @@ impl MenteDbServer {
         };
         let mut tracker = self.trajectory_tracker.lock().await;
         tracker.record_turn(node);
-        let _predictions = tracker.predict_next_topics();
+        let predictions: Vec<String> = tracker
+            .predict_next_topics()
+            .into_iter()
+            .collect();
         drop(tracker);
 
         // ── Auto-maintenance (staggered) ──
@@ -1809,6 +1924,9 @@ impl MenteDbServer {
             context_count = context_items.len(),
             new_memories = delta.added.len(),
             memories_stored = stored_ids.len(),
+            inference_applied,
+            phantom_count,
+            contradiction_count,
             pain_warnings = pain_warnings.len(),
             elapsed_ms = elapsed_ms,
             "process_turn complete"
@@ -1825,7 +1943,11 @@ impl MenteDbServer {
                 "ok": true,
                 "context": context_summaries,
                 "stored": stored_ids.len(),
+                "inference_applied": inference_applied,
                 "pain_warnings": pain_warnings,
+                "contradictions": contradiction_count,
+                "phantoms": phantom_count,
+                "predictions": predictions,
             })
             .to_string(),
         )]))

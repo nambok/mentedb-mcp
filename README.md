@@ -13,7 +13,8 @@ This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible c
 Install from crates.io:
 
 ```bash
-cargo install mentedb-mcp
+# Requires Rust: https://rustup.rs
+cargo install --git https://github.com/nambok/mentedb-mcp
 ```
 
 Then run the auto-setup for your client:

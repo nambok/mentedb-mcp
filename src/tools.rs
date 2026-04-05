@@ -94,6 +94,16 @@ pub struct ForgetMemoryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ForgetAllRequest {
+    #[schemars(
+        description = "Safety confirmation. Must be exactly 'CONFIRM' to proceed. This deletes ALL memories permanently."
+    )]
+    pub confirm: String,
+    #[schemars(description = "Optional reason for resetting the database")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct AssembleContextRequest {
     #[schemars(description = "The query to assemble context for")]
     pub query: String,
@@ -735,6 +745,51 @@ impl MenteDbServer {
                 error_result(&format!("Failed to forget memory: {e}"))
             }
         }
+    }
+
+    #[rmcp::tool(
+        description = "Delete ALL memories from the database permanently. Requires confirm='CONFIRM' as a safety check. Use when the user explicitly asks to reset, clear, or start fresh."
+    )]
+    async fn forget_all(
+        &self,
+        Parameters(req): Parameters<ForgetAllRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        if req.confirm != "CONFIRM" {
+            return error_result(
+                "Safety check failed. Set confirm to exactly 'CONFIRM' to delete all memories.",
+            );
+        }
+
+        let reason = req.reason.as_deref().unwrap_or("user requested reset");
+        tracing::warn!(reason = %reason, "forgetting ALL memories");
+
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
+        let total = all.len();
+        let mut forgotten = 0u64;
+        let mut errors = 0u64;
+
+        for mem in &all {
+            match db.forget(mem.memory.id) {
+                Ok(()) => forgotten += 1,
+                Err(e) => {
+                    tracing::error!(id = %mem.memory.id.0, error = %e, "forget_all: failed to delete");
+                    errors += 1;
+                }
+            }
+        }
+
+        tracing::info!(forgotten = forgotten, errors = errors, "forget_all complete");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "reset_complete",
+                "total_found": total,
+                "forgotten": forgotten,
+                "errors": errors,
+                "reason": reason,
+            })
+            .to_string(),
+        )]))
     }
 
     #[rmcp::tool(
@@ -2100,6 +2155,7 @@ impl ServerHandler for MenteDbServer {
              WHEN TO FORGET:\n\
              - When the user explicitly asks you to forget something.\n\
              - When information is confirmed wrong, call forget_memory with a reason.\n\
+             - When the user asks to 'reset', 'clear everything', or 'start fresh', call forget_all with confirm='CONFIRM'.\n\
              \n\
              COGNITIVE FEATURES (use when appropriate):\n\
              - record_pain: When something went wrong (bad advice, failed approach), record it so you \
@@ -2175,6 +2231,7 @@ impl ServerHandler for MenteDbServer {
                 json!({ "name": "search_memories", "description": "Semantic similarity search with type filtering" }),
                 json!({ "name": "relate_memories", "description": "Create typed edges between memories" }),
                 json!({ "name": "forget_memory", "description": "Delete a memory" }),
+                json!({ "name": "forget_all", "description": "Delete ALL memories (requires confirm='CONFIRM')" }),
                 json!({ "name": "ingest_conversation", "description": "Extract memories from raw conversation via LLM" }),
                 json!({ "name": "assemble_context", "description": "Build optimized context window with token budget" }),
                 json!({ "name": "get_related", "description": "Traverse relationships from a memory" }),

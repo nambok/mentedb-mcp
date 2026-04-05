@@ -1,7 +1,16 @@
 use std::sync::Arc;
 
 use mentedb::MenteDb;
-use mentedb_cognitive::{PainRegistry, PhantomConfig, PhantomTracker, TrajectoryTracker};
+use mentedb_cognitive::{
+    CognitionStream, InterferenceDetector, PainRegistry, PainSignal, PhantomConfig,
+    PhantomTracker, StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
+};
+use mentedb_cognitive::trajectory::DecisionState;
+use mentedb_core::types::{AgentId, MemoryId};
+use mentedb_consolidation::{
+    ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
+    DecayEngine, FactExtractor, ForgetEngine, ForgetRequest, MemoryCompressor,
+};
 use mentedb_context::{AssemblyConfig, ContextAssembler, OutputFormat, ScoredMemory};
 use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
@@ -11,6 +20,7 @@ use mentedb_embedding::provider::EmbeddingProvider;
 use mentedb_extraction::{
     ExtractionConfig, ExtractionPipeline, MockExtractionProvider, ProcessedExtractionResult,
 };
+use mentedb_graph::{extract_subgraph, find_contradictions, shortest_path};
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -118,6 +128,183 @@ pub struct IngestConversationRequest {
 pub struct GetMemoryRequest {
     #[schemars(description = "The UUID of the memory to retrieve")]
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConsolidateMemoriesRequest {
+    #[schemars(description = "Minimum cluster size for consolidation (default: 2)")]
+    pub min_cluster_size: Option<usize>,
+    #[schemars(description = "Similarity threshold for clustering (default: 0.85)")]
+    pub similarity_threshold: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyDecayRequest {
+    #[schemars(description = "Half-life in hours for salience decay (default: 168, i.e. 7 days)")]
+    pub half_life_hours: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompressMemoryRequest {
+    #[schemars(description = "UUID of the memory to compress")]
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvaluateArchivalRequest {
+    #[schemars(description = "Salience threshold below which memories are candidates for archival (default: 0.1)")]
+    pub salience_threshold: Option<f32>,
+    #[schemars(description = "Maximum age in days before considering archival (default: 7)")]
+    pub max_age_days: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExtractFactsRequest {
+    #[schemars(description = "UUID of the memory to extract facts from")]
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GdprForgetRequest {
+    #[schemars(description = "Subject identifier (agent UUID) whose memories should be forgotten")]
+    pub subject: String,
+    #[schemars(description = "Reason for the GDPR forget request")]
+    pub reason: String,
+}
+
+// -- Cognitive tool request types --
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecordPainRequest {
+    #[schemars(description = "UUID of the memory associated with this pain signal")]
+    pub memory_id: String,
+    #[schemars(description = "Pain intensity from 0.0 to 1.0")]
+    pub intensity: f32,
+    #[schemars(description = "Keywords that should trigger this pain warning")]
+    pub trigger_keywords: Vec<String>,
+    #[schemars(description = "Human-readable description of the negative experience")]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DetectPhantomsRequest {
+    #[schemars(description = "Content text to scan for knowledge gaps")]
+    pub content: String,
+    #[schemars(description = "Optional list of entities already known to the caller")]
+    pub known_entities: Option<Vec<String>>,
+    #[schemars(description = "Optional conversation turn ID for tracking")]
+    pub turn_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResolvePhantomRequest {
+    #[schemars(description = "UUID of the phantom memory to mark as resolved")]
+    pub phantom_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecordTrajectoryRequest {
+    #[schemars(description = "Conversation turn identifier")]
+    pub turn_id: u64,
+    #[schemars(description = "Summary of the topic discussed in this turn")]
+    pub topic_summary: String,
+    #[schemars(
+        description = "Decision state: investigating, narrowed_to:<choice>, decided:<decision>, interrupted, or completed"
+    )]
+    pub decision_state: String,
+    #[schemars(description = "Optional list of open questions remaining")]
+    pub open_questions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DetectInterferenceRequest {
+    #[schemars(description = "List of memory UUIDs to check for interference")]
+    pub memory_ids: Vec<String>,
+    #[schemars(description = "Optional similarity threshold (default: 0.8)")]
+    pub similarity_threshold: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct KnownFact {
+    #[schemars(description = "UUID of the memory this fact came from")]
+    pub memory_id: String,
+    #[schemars(description = "Summary text of the known fact")]
+    pub summary: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckStreamRequest {
+    #[schemars(description = "LLM output text to check against known facts")]
+    pub text: String,
+    #[schemars(description = "List of known facts to check for contradictions")]
+    pub known_facts: Vec<KnownFact>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WriteInferenceRequest {
+    #[schemars(description = "UUID of the memory to run write-time inference on")]
+    pub memory_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetRelatedRequest {
+    #[schemars(description = "UUID of the memory to find relations for")]
+    pub id: String,
+    #[schemars(
+        description = "Optional edge type filter: caused, before, related, contradicts, supports, supersedes, derived, part_of"
+    )]
+    pub edge_type: Option<String>,
+    #[schemars(description = "Maximum traversal depth (default: 1)")]
+    pub depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FindPathRequest {
+    #[schemars(description = "UUID of the source memory")]
+    pub from_id: String,
+    #[schemars(description = "UUID of the target memory")]
+    pub to_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetSubgraphRequest {
+    #[schemars(description = "UUID of the center memory")]
+    pub center_id: String,
+    #[schemars(description = "Maximum hop radius from center (default: 2)")]
+    pub radius: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FindContradictionsRequest {
+    #[schemars(description = "UUID of the memory to find contradictions for")]
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PropagateBeliefRequest {
+    #[schemars(description = "UUID of the memory whose confidence changed")]
+    pub id: String,
+    #[schemars(description = "New confidence value (0.0 to 1.0)")]
+    pub new_confidence: f32,
+}
+
+/// Parse a decision state string into a DecisionState enum.
+fn parse_decision_state(s: &str) -> DecisionState {
+    let lower = s.to_lowercase();
+    if lower == "investigating" {
+        DecisionState::Investigating
+    } else if lower == "interrupted" {
+        DecisionState::Interrupted
+    } else if lower == "completed" {
+        DecisionState::Completed
+    } else if let Some(choice) = lower.strip_prefix("narrowed_to:") {
+        DecisionState::NarrowedTo(choice.trim().to_string())
+    } else if let Some(decision) = lower.strip_prefix("decided:") {
+        DecisionState::Decided(decision.trim().to_string())
+    } else {
+        // Fall back to Investigating for unrecognized strings
+        DecisionState::Investigating
+    }
 }
 
 /// MenteDB MCP server state holding the database and cognitive subsystems.
@@ -232,7 +419,7 @@ fn find_memory_by_id(
     target_id: Uuid,
 ) -> Result<Option<ScoredMemory>, String> {
     let all = recall_all_memories(db);
-    Ok(all.into_iter().find(|sm| sm.memory.id == target_id))
+    Ok(all.into_iter().find(|sm| sm.memory.id == MemoryId(target_id)))
 }
 
 /// Store extraction results (accepted + contradictions) into the database.
@@ -250,7 +437,7 @@ fn store_extraction_results(
         let embedding = embedding_provider
             .embed(&memory.content)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let mut node = MemoryNode::new(agent_id, mem_type, memory.content.clone(), embedding);
+        let mut node = MemoryNode::new(AgentId(agent_id), mem_type, memory.content.clone(), embedding);
         node.tags = memory.tags.clone();
         let id = node.id;
         if let Err(e) = db.store(node) {
@@ -266,7 +453,7 @@ fn store_extraction_results(
         let embedding = embedding_provider
             .embed(&memory.content)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let mut node = MemoryNode::new(agent_id, mem_type, memory.content.clone(), embedding);
+        let mut node = MemoryNode::new(AgentId(agent_id), mem_type, memory.content.clone(), embedding);
         node.tags = memory.tags.clone();
         node.tags.push("has_contradiction".to_string());
         let id = node.id;
@@ -305,7 +492,7 @@ impl MenteDbServer {
             },
             None => Uuid::nil(),
         };
-        let mut node = MemoryNode::new(agent_id, memory_type, req.content, embedding);
+        let mut node = MemoryNode::new(AgentId(agent_id), memory_type, req.content, embedding);
 
         if let Some(tags) = req.tags {
             node.tags = tags;
@@ -468,8 +655,8 @@ impl MenteDbServer {
             .as_micros() as u64;
 
         let edge = MemoryEdge {
-            source: from_id,
-            target: to_id,
+            source: MemoryId(from_id),
+            target: MemoryId(to_id),
             edge_type,
             weight: req.weight.unwrap_or(1.0),
             created_at: now,
@@ -511,7 +698,7 @@ impl MenteDbServer {
         }
 
         let mut db = self.db.lock().await;
-        match db.forget(id) {
+        match db.forget(MemoryId(id)) {
             Ok(()) => {
                 tracing::info!(id = %id, "memory forgotten");
                 Ok(CallToolResult::success(vec![Content::text(
@@ -858,9 +1045,987 @@ impl MenteDbServer {
             }
         }
     }
-}
 
-#[rmcp::tool_handler]
+    #[rmcp::tool(
+        description = "Find clusters of similar memories and merge them into consolidated semantic memories. Returns consolidation candidates and merged results."
+    )]
+    async fn consolidate_memories(
+        &self,
+        Parameters(req): Parameters<ConsolidateMemoriesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let min_cluster_size = req.min_cluster_size.unwrap_or(2);
+        let similarity_threshold = req.similarity_threshold.unwrap_or(0.85);
+
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
+        let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+
+        if memories.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                json!({ "status": "no_memories", "clusters": [], "consolidated": [] }).to_string(),
+            )]));
+        }
+
+        let engine = ConsolidationEngine::new();
+        let candidates = engine.find_candidates(&memories, min_cluster_size, similarity_threshold);
+
+        let mut consolidated_results: Vec<serde_json::Value> = Vec::new();
+        for candidate in &candidates {
+            let cluster_memories: Vec<&MemoryNode> = candidate
+                .memories
+                .iter()
+                .filter_map(|id| memories.iter().find(|m| m.id == *id))
+                .collect();
+            let cluster_owned: Vec<MemoryNode> = cluster_memories.into_iter().cloned().collect();
+            let consolidated = engine.consolidate(&cluster_owned);
+
+            consolidated_results.push(json!({
+                "topic": candidate.topic,
+                "avg_similarity": candidate.avg_similarity,
+                "source_memory_ids": candidate.memories.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                "merged_summary": consolidated.summary,
+                "new_type": format!("{:?}", consolidated.new_type),
+                "combined_confidence": consolidated.combined_confidence,
+            }));
+        }
+
+        tracing::info!(
+            clusters = candidates.len(),
+            threshold = similarity_threshold,
+            "memory consolidation complete"
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "complete",
+                "total_memories_analyzed": memories.len(),
+                "clusters_found": candidates.len(),
+                "consolidated": consolidated_results,
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Apply salience decay to all memories based on time and access patterns. Returns count of memories processed and those below archival threshold."
+    )]
+    async fn apply_decay(
+        &self,
+        Parameters(req): Parameters<ApplyDecayRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let half_life_hours = req.half_life_hours.unwrap_or(168.0); // 7 days
+        let half_life_us = (half_life_hours * 3600.0 * 1_000_000.0) as u64;
+
+        let config = DecayConfig {
+            half_life_us,
+            ..DecayConfig::default()
+        };
+        let engine = DecayEngine::new(config);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
+        let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+        let total = memories.len();
+
+        engine.apply_decay_batch(&mut memories, now);
+
+        let archival_threshold = 0.1;
+        let below_threshold = memories
+            .iter()
+            .filter(|m| DecayEngine::needs_archival(m, archival_threshold))
+            .count();
+
+        tracing::info!(
+            processed = total,
+            below_threshold = below_threshold,
+            half_life_hours = half_life_hours,
+            "decay applied"
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "complete",
+                "memories_processed": total,
+                "below_archival_threshold": below_threshold,
+                "archival_threshold": archival_threshold,
+                "half_life_hours": half_life_hours,
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Compress a memory by extracting key sentences and removing filler. Returns original length, compressed content, and compression ratio."
+    )]
+    async fn compress_memory(
+        &self,
+        Parameters(req): Parameters<CompressMemoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut db = self.db.lock().await;
+        match find_memory_by_id(&mut db, id) {
+            Ok(Some(sm)) => {
+                let compressor = MemoryCompressor::new();
+                let compressed = compressor.compress(&sm.memory);
+                let original_length = sm.memory.content.len();
+
+                tracing::info!(
+                    id = %id,
+                    original_len = original_length,
+                    ratio = compressed.compression_ratio,
+                    "memory compressed"
+                );
+
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "id": id.to_string(),
+                        "original_length": original_length,
+                        "compressed_content": compressed.compressed_content,
+                        "compression_ratio": compressed.compression_ratio,
+                        "key_facts": compressed.key_facts,
+                    })
+                    .to_string(),
+                )]))
+            }
+            Ok(None) => error_result(&format!("Memory not found: {id}")),
+            Err(e) => error_result(&format!("Failed to get memory: {e}")),
+        }
+    }
+
+    #[rmcp::tool(
+        description = "Evaluate all memories for archival, deletion, or consolidation decisions based on salience and age thresholds."
+    )]
+    async fn evaluate_archival(
+        &self,
+        Parameters(req): Parameters<EvaluateArchivalRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let max_salience = req.salience_threshold.unwrap_or(0.1);
+        let min_age_us = req
+            .max_age_days
+            .map(|d| d * 24 * 3600 * 1_000_000)
+            .unwrap_or(7 * 24 * 3600 * 1_000_000);
+
+        let config = ArchivalConfig {
+            max_salience,
+            min_age_us,
+            ..ArchivalConfig::default()
+        };
+        let pipeline = ArchivalPipeline::new(config);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
+        let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+
+        let decisions = pipeline.evaluate_batch(&memories, now);
+
+        let mut keep = Vec::new();
+        let mut archive = Vec::new();
+        let mut delete = Vec::new();
+        let mut consolidate = Vec::new();
+
+        for (id, decision) in &decisions {
+            let id_str = id.to_string();
+            match decision {
+                ArchivalDecision::Keep => keep.push(id_str),
+                ArchivalDecision::Archive => archive.push(id_str),
+                ArchivalDecision::Delete => delete.push(id_str),
+                ArchivalDecision::Consolidate(ids) => {
+                    consolidate.push(json!({
+                        "id": id_str,
+                        "merge_with": ids.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+                    }));
+                }
+            }
+        }
+
+        tracing::info!(
+            total = decisions.len(),
+            keep = keep.len(),
+            archive = archive.len(),
+            delete = delete.len(),
+            consolidate = consolidate.len(),
+            "archival evaluation complete"
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "complete",
+                "total_evaluated": decisions.len(),
+                "keep": { "count": keep.len(), "ids": keep },
+                "archive": { "count": archive.len(), "ids": archive },
+                "delete": { "count": delete.len(), "ids": delete },
+                "consolidate": { "count": consolidate.len(), "items": consolidate },
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Extract structured subject-predicate-object facts from a memory using rule-based pattern matching."
+    )]
+    async fn extract_facts(
+        &self,
+        Parameters(req): Parameters<ExtractFactsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut db = self.db.lock().await;
+        match find_memory_by_id(&mut db, id) {
+            Ok(Some(sm)) => {
+                let extractor = FactExtractor::new();
+                let facts = extractor.extract_facts(&sm.memory);
+
+                let facts_json: Vec<serde_json::Value> = facts
+                    .iter()
+                    .map(|f| {
+                        json!({
+                            "subject": f.subject,
+                            "predicate": f.predicate,
+                            "object": f.object,
+                            "confidence": f.confidence,
+                            "source_memory": f.source_memory.to_string(),
+                        })
+                    })
+                    .collect();
+
+                tracing::info!(id = %id, facts_count = facts.len(), "facts extracted");
+
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "id": id.to_string(),
+                        "facts_count": facts.len(),
+                        "facts": facts_json,
+                    })
+                    .to_string(),
+                )]))
+            }
+            Ok(None) => error_result(&format!("Memory not found: {id}")),
+            Err(e) => error_result(&format!("Failed to get memory: {e}")),
+        }
+    }
+
+    #[rmcp::tool(
+        description = "GDPR-compliant forget: plan and report what would be deleted for a given subject (agent). Returns audit log, count of affected memories and edges."
+    )]
+    async fn gdpr_forget(
+        &self,
+        Parameters(req): Parameters<GdprForgetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let agent_id = match parse_uuid(&req.subject) {
+            Ok(id) => id,
+            Err(e) => return error_result(&format!("Invalid subject UUID: {e}")),
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
+        let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+
+        let forget_request = ForgetRequest {
+            agent_id: Some(AgentId(agent_id)),
+            space_id: None,
+            memory_ids: Vec::new(),
+            reason: req.reason.clone(),
+            requested_at: now,
+        };
+
+        let engine = ForgetEngine::new();
+        // No edge listing API available; pass empty edges
+        let result = engine.plan_forget(&forget_request, &memories, &[]);
+
+        // Execute the actual deletion for matching memories
+        let mut deleted_count = 0u64;
+        for m in &memories {
+            if m.agent_id == AgentId(agent_id) {
+                if let Err(e) = db.forget(m.id) {
+                    tracing::error!(id = %m.id, error = %e, "failed to forget memory during GDPR delete");
+                } else {
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        tracing::info!(
+            subject = %agent_id,
+            reason = %req.reason,
+            deleted = deleted_count,
+            "GDPR forget executed"
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "complete",
+                "subject": agent_id.to_string(),
+                "reason": req.reason,
+                "planned_deletions": result.deleted_memories,
+                "actually_deleted": deleted_count,
+                "affected_edges": result.deleted_edges,
+                "affected_facts": result.deleted_facts,
+                "audit_log": result.audit_log_entry,
+            })
+            .to_string(),
+        )]))
+    }
+
+    // -- Cognitive tools --
+
+    #[rmcp::tool(
+        description = "Record a negative experience (pain signal) so MenteDB can warn when similar contexts arise."
+    )]
+    async fn record_pain(
+        &self,
+        Parameters(req): Parameters<RecordPainRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let memory_id = match parse_uuid(&req.memory_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let signal_id = MemoryId::new();
+        let signal = PainSignal {
+            id: signal_id,
+            memory_id: MemoryId::from(memory_id),
+            intensity: req.intensity.clamp(0.0, 1.0),
+            trigger_keywords: req.trigger_keywords,
+            description: req.description,
+            created_at: now,
+            decay_rate: 0.1,
+        };
+
+        let mut registry = self.pain_registry.lock().await;
+        registry.record_pain(signal);
+        tracing::info!(signal_id = %signal_id, memory_id = %memory_id, "pain signal recorded");
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "recorded",
+                "signal_id": signal_id.to_string(),
+                "memory_id": memory_id.to_string(),
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Scan content for knowledge gaps — entities referenced but not present in memory."
+    )]
+    async fn detect_phantoms(
+        &self,
+        Parameters(req): Parameters<DetectPhantomsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let known = req.known_entities.unwrap_or_default();
+        let turn_id = req.turn_id.unwrap_or(0);
+
+        let mut tracker = self.phantom_tracker.lock().await;
+        let phantoms = tracker.detect_gaps(&req.content, &known, turn_id);
+
+        let items: Vec<serde_json::Value> = phantoms
+            .iter()
+            .map(|p| {
+                json!({
+                    "id": p.id.to_string(),
+                    "gap_description": p.gap_description,
+                    "source_reference": p.source_reference,
+                    "priority": format!("{:?}", p.priority),
+                })
+            })
+            .collect();
+
+        tracing::info!(count = items.len(), turn_id = turn_id, "phantom detection complete");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "phantoms": items, "count": items.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(description = "Mark a knowledge gap (phantom memory) as resolved.")]
+    async fn resolve_phantom(
+        &self,
+        Parameters(req): Parameters<ResolvePhantomRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let phantom_id = match parse_uuid(&req.phantom_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut tracker = self.phantom_tracker.lock().await;
+        tracker.resolve(phantom_id);
+        tracing::info!(phantom_id = %phantom_id, "phantom resolved");
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "status": "resolved", "phantom_id": phantom_id.to_string() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Record a conversation turn for trajectory tracking. Enables topic prediction and resume context."
+    )]
+    async fn record_trajectory(
+        &self,
+        Parameters(req): Parameters<RecordTrajectoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let decision_state = parse_decision_state(&req.decision_state);
+
+        let embedding = self
+            .embedding_provider
+            .embed(&req.topic_summary)
+            .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let node = TrajectoryNode {
+            turn_id: req.turn_id,
+            topic_embedding: embedding,
+            topic_summary: req.topic_summary,
+            decision_state,
+            open_questions: req.open_questions.unwrap_or_default(),
+            timestamp: now,
+        };
+
+        let mut tracker = self.trajectory_tracker.lock().await;
+        tracker.record_turn(node);
+        let trajectory_len = tracker.get_trajectory().len();
+        tracing::info!(turn_id = req.turn_id, trajectory_len, "trajectory turn recorded");
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "status": "recorded",
+                "turn_id": req.turn_id,
+                "trajectory_length": trajectory_len,
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Predict likely next topics based on the current conversation trajectory."
+    )]
+    async fn predict_topics(&self) -> Result<CallToolResult, McpError> {
+        let tracker = self.trajectory_tracker.lock().await;
+        let predictions = tracker.predict_next_topics();
+        tracing::info!(count = predictions.len(), "topic predictions generated");
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "predictions": predictions, "count": predictions.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Detect pairs of memories similar enough to confuse an LLM, with disambiguation hints."
+    )]
+    async fn detect_interference(
+        &self,
+        Parameters(req): Parameters<DetectInterferenceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let threshold = req.similarity_threshold.unwrap_or(0.8);
+        let detector = InterferenceDetector::new(threshold);
+
+        let mut db = self.db.lock().await;
+        let mut memories: Vec<MemoryNode> = Vec::new();
+        for id_str in &req.memory_ids {
+            let id = match parse_uuid(id_str) {
+                Ok(id) => id,
+                Err(e) => return error_result(&e),
+            };
+            match find_memory_by_id(&mut db, id) {
+                Ok(Some(sm)) => memories.push(sm.memory),
+                Ok(None) => {
+                    return error_result(&format!("Memory not found: {id}"));
+                }
+                Err(e) => {
+                    return error_result(&format!("Failed to fetch memory {id}: {e}"));
+                }
+            }
+        }
+
+        let pairs = detector.detect_interference(&memories);
+        let items: Vec<serde_json::Value> = pairs
+            .iter()
+            .map(|p| {
+                json!({
+                    "memory_a": p.memory_a.to_string(),
+                    "memory_b": p.memory_b.to_string(),
+                    "similarity": p.similarity,
+                    "disambiguation": p.disambiguation,
+                })
+            })
+            .collect();
+
+        tracing::info!(pairs = items.len(), "interference detection complete");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "interference_pairs": items, "count": items.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Check LLM output text against known facts for contradictions, forgotten facts, and reinforcements."
+    )]
+    async fn check_stream(
+        &self,
+        Parameters(req): Parameters<CheckStreamRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let stream = CognitionStream::with_config(StreamConfig::default());
+        stream.feed_token(&req.text);
+
+        let facts: Vec<(MemoryId, String)> = req
+            .known_facts
+            .iter()
+            .filter_map(|f| {
+                parse_uuid(&f.memory_id)
+                    .ok()
+                    .map(|id| (MemoryId::from(id), f.summary.clone()))
+            })
+            .collect();
+
+        let alerts = stream.check_alerts(&facts);
+        let items: Vec<serde_json::Value> = alerts
+            .iter()
+            .map(|a| match a {
+                mentedb_cognitive::StreamAlert::Contradiction {
+                    memory_id,
+                    ai_said,
+                    stored,
+                } => json!({
+                    "type": "contradiction",
+                    "memory_id": memory_id.to_string(),
+                    "ai_said": ai_said,
+                    "stored_fact": stored,
+                }),
+                mentedb_cognitive::StreamAlert::Forgotten { memory_id, summary } => json!({
+                    "type": "forgotten",
+                    "memory_id": memory_id.to_string(),
+                    "summary": summary,
+                }),
+                mentedb_cognitive::StreamAlert::Correction {
+                    memory_id,
+                    old,
+                    new,
+                } => json!({
+                    "type": "correction",
+                    "memory_id": memory_id.to_string(),
+                    "old": old,
+                    "new": new,
+                }),
+                mentedb_cognitive::StreamAlert::Reinforcement { memory_id } => json!({
+                    "type": "reinforcement",
+                    "memory_id": memory_id.to_string(),
+                }),
+            })
+            .collect();
+
+        tracing::info!(alerts = items.len(), "stream check complete");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "alerts": items, "count": items.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Run write-time inference on a memory to detect contradictions, suggest edges, mark obsolescence, and adjust confidence."
+    )]
+    async fn write_inference(
+        &self,
+        Parameters(req): Parameters<WriteInferenceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let target_id = match parse_uuid(&req.memory_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut db = self.db.lock().await;
+        let target_memory = match find_memory_by_id(&mut db, target_id) {
+            Ok(Some(sm)) => sm.memory,
+            Ok(None) => return error_result(&format!("Memory not found: {target_id}")),
+            Err(e) => return error_result(&format!("Failed to fetch memory: {e}")),
+        };
+
+        // Gather nearby memories via similarity search for comparison
+        let similar_ids = db
+            .recall_similar(&target_memory.embedding, 20)
+            .unwrap_or_default();
+        let all_memories = recall_all_memories(&mut db);
+        let existing: Vec<MemoryNode> = similar_ids
+            .iter()
+            .filter_map(|(id, _)| {
+                if *id == MemoryId(target_id) {
+                    return None;
+                }
+                all_memories
+                    .iter()
+                    .find(|sm| sm.memory.id == *id)
+                    .map(|sm| sm.memory.clone())
+            })
+            .collect();
+
+        let engine = WriteInferenceEngine::new();
+        let actions = engine.infer_on_write(&target_memory, &existing, &[]);
+
+        let items: Vec<serde_json::Value> = actions
+            .iter()
+            .map(|a| match a {
+                mentedb_cognitive::InferredAction::FlagContradiction {
+                    existing,
+                    new,
+                    reason,
+                } => json!({
+                    "action": "flag_contradiction",
+                    "existing_memory": existing.to_string(),
+                    "new_memory": new.to_string(),
+                    "reason": reason,
+                }),
+                mentedb_cognitive::InferredAction::MarkObsolete {
+                    memory,
+                    superseded_by,
+                } => json!({
+                    "action": "mark_obsolete",
+                    "memory": memory.to_string(),
+                    "superseded_by": superseded_by.to_string(),
+                }),
+                mentedb_cognitive::InferredAction::CreateEdge {
+                    source,
+                    target,
+                    edge_type,
+                    weight,
+                } => json!({
+                    "action": "create_edge",
+                    "source": source.to_string(),
+                    "target": target.to_string(),
+                    "edge_type": format!("{:?}", edge_type),
+                    "weight": weight,
+                }),
+                mentedb_cognitive::InferredAction::UpdateConfidence {
+                    memory,
+                    new_confidence,
+                } => json!({
+                    "action": "update_confidence",
+                    "memory": memory.to_string(),
+                    "new_confidence": new_confidence,
+                }),
+                mentedb_cognitive::InferredAction::PropagateBeliefChange { root, delta } => {
+                    json!({
+                        "action": "propagate_belief_change",
+                        "root": root.to_string(),
+                        "delta": delta,
+                    })
+                }
+            })
+            .collect();
+
+        tracing::info!(memory_id = %target_id, actions = items.len(), "write inference complete");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "inferred_actions": items, "count": items.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Find all memories directly related to a given memory, with optional edge type filter and traversal depth."
+    )]
+    async fn get_related(
+        &self,
+        Parameters(req): Parameters<GetRelatedRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let depth = req.depth.unwrap_or(1);
+        let edge_filter: Option<EdgeType> = match req.edge_type.as_deref() {
+            Some(et) => match parse_edge_type(et) {
+                Ok(et) => Some(et),
+                Err(e) => return error_result(&e),
+            },
+            None => None,
+        };
+
+        let db = self.db.lock().await;
+        let graph = db.graph();
+        let csr = graph.graph();
+        let mem_id = MemoryId(id);
+
+        if !csr.contains_node(mem_id) {
+            return error_result(&format!("Memory not found in graph: {id}"));
+        }
+
+        let mut related: Vec<serde_json::Value> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier = vec![(mem_id, 0usize)];
+        visited.insert(mem_id);
+
+        while let Some((current, current_depth)) = frontier.pop() {
+            if current_depth >= depth {
+                continue;
+            }
+            for (target, edge) in csr.outgoing(current) {
+                if let Some(ref filter) = edge_filter {
+                    if edge.edge_type != *filter {
+                        continue;
+                    }
+                }
+                let next_depth = current_depth + 1;
+                if visited.insert(target) {
+                    related.push(json!({
+                        "id": target.to_string(),
+                        "edge_type": format!("{:?}", edge.edge_type),
+                        "weight": edge.weight,
+                        "depth": next_depth,
+                        "direction": "outgoing",
+                    }));
+                    frontier.push((target, next_depth));
+                }
+            }
+            for (source, edge) in csr.incoming(current) {
+                if let Some(ref filter) = edge_filter {
+                    if edge.edge_type != *filter {
+                        continue;
+                    }
+                }
+                let next_depth = current_depth + 1;
+                if visited.insert(source) {
+                    related.push(json!({
+                        "id": source.to_string(),
+                        "edge_type": format!("{:?}", edge.edge_type),
+                        "weight": edge.weight,
+                        "depth": next_depth,
+                        "direction": "incoming",
+                    }));
+                    frontier.push((source, next_depth));
+                }
+            }
+        }
+
+        tracing::info!(id = %id, depth = depth, related_count = related.len(), "get_related completed");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({ "id": id.to_string(), "related": related, "count": related.len() }).to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Find the shortest path between two memories in the knowledge graph."
+    )]
+    async fn find_path(
+        &self,
+        Parameters(req): Parameters<FindPathRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let from_id = match parse_uuid(&req.from_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+        let to_id = match parse_uuid(&req.to_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let db = self.db.lock().await;
+        let csr = db.graph().graph();
+        let from_mem = MemoryId(from_id);
+        let to_mem = MemoryId(to_id);
+
+        if !csr.contains_node(from_mem) {
+            return error_result(&format!("Source memory not found in graph: {from_id}"));
+        }
+        if !csr.contains_node(to_mem) {
+            return error_result(&format!("Target memory not found in graph: {to_id}"));
+        }
+
+        match shortest_path(csr, from_mem, to_mem) {
+            Some(path) => {
+                let path_strs: Vec<String> = path.iter().map(|id| id.to_string()).collect();
+                tracing::info!(from = %from_id, to = %to_id, hops = path.len() - 1, "path found");
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "from": from_id.to_string(),
+                        "to": to_id.to_string(),
+                        "path": path_strs,
+                        "hops": path.len() - 1,
+                    })
+                    .to_string(),
+                )]))
+            }
+            None => {
+                tracing::info!(from = %from_id, to = %to_id, "no path found");
+                Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "from": from_id.to_string(),
+                        "to": to_id.to_string(),
+                        "path": null,
+                        "message": "no path found",
+                    })
+                    .to_string(),
+                )]))
+            }
+        }
+    }
+
+    #[rmcp::tool(
+        description = "Extract all nodes and edges within N hops of a center memory, returning the local subgraph."
+    )]
+    async fn get_subgraph(
+        &self,
+        Parameters(req): Parameters<GetSubgraphRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let center_id = match parse_uuid(&req.center_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+        let radius = req.radius.unwrap_or(2);
+
+        let db = self.db.lock().await;
+        let csr = db.graph().graph();
+        let center_mem = MemoryId(center_id);
+
+        if !csr.contains_node(center_mem) {
+            return error_result(&format!("Center memory not found in graph: {center_id}"));
+        }
+
+        let (nodes, edges) = extract_subgraph(csr, center_mem, radius);
+
+        let nodes_json: Vec<String> = nodes.iter().map(|id| id.to_string()).collect();
+        let edges_json: Vec<serde_json::Value> = edges
+            .iter()
+            .map(|e| {
+                json!({
+                    "source": e.source.to_string(),
+                    "target": e.target.to_string(),
+                    "edge_type": format!("{:?}", e.edge_type),
+                    "weight": e.weight,
+                })
+            })
+            .collect();
+
+        tracing::info!(
+            center = %center_id,
+            radius = radius,
+            nodes = nodes.len(),
+            edges = edges.len(),
+            "subgraph extracted"
+        );
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "center": center_id.to_string(),
+                "radius": radius,
+                "nodes": nodes_json,
+                "edges": edges_json,
+                "node_count": nodes.len(),
+                "edge_count": edges.len(),
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Find all memories that contradict a given memory via Contradicts edges in the knowledge graph."
+    )]
+    async fn find_contradictions(
+        &self,
+        Parameters(req): Parameters<FindContradictionsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let db = self.db.lock().await;
+        let csr = db.graph().graph();
+        let mem_id = MemoryId(id);
+
+        if !csr.contains_node(mem_id) {
+            return error_result(&format!("Memory not found in graph: {id}"));
+        }
+
+        let contradictions = find_contradictions(csr, mem_id);
+        let ids: Vec<String> = contradictions.iter().map(|c| c.to_string()).collect();
+
+        tracing::info!(id = %id, contradictions = contradictions.len(), "contradictions found");
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "id": id.to_string(),
+                "contradictions": ids,
+                "count": contradictions.len(),
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Propagate a confidence change through the knowledge graph. Returns all affected memories and their new confidence values."
+    )]
+    async fn propagate_belief(
+        &self,
+        Parameters(req): Parameters<PropagateBeliefRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        if req.new_confidence < 0.0 || req.new_confidence > 1.0 {
+            return error_result("new_confidence must be between 0.0 and 1.0");
+        }
+
+        let db = self.db.lock().await;
+        let graph = db.graph();
+        let mem_id = MemoryId(id);
+
+        if !graph.graph().contains_node(mem_id) {
+            return error_result(&format!("Memory not found in graph: {id}"));
+        }
+
+        let affected = graph.propagate_belief_change(mem_id, req.new_confidence);
+        let affected_json: Vec<serde_json::Value> = affected
+            .iter()
+            .map(|(mid, conf)| {
+                json!({
+                    "id": mid.to_string(),
+                    "new_confidence": conf,
+                })
+            })
+            .collect();
+
+        tracing::info!(
+            id = %id,
+            new_confidence = req.new_confidence,
+            affected = affected.len(),
+            "belief propagation completed"
+        );
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "id": id.to_string(),
+                "new_confidence": req.new_confidence,
+                "affected": affected_json,
+                "affected_count": affected.len(),
+            })
+            .to_string(),
+        )]))
+    }
+}
 impl ServerHandler for MenteDbServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(

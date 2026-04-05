@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.9...mentedb-mcp-v0.2.10) (2026-04-05)
+
+
+### Bug Fixes
+
+* signal handler and error-safe shutdown to ensure db.close() always runs ([62bef96](https://github.com/nambok/mentedb-mcp/commit/62bef961876194d42f12b365ddf881eb53139474))
+
 ## [0.2.9](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.8...mentedb-mcp-v0.2.9) (2026-04-05)
 
 

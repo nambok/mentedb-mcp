@@ -115,15 +115,38 @@ async fn main() -> anyhow::Result<()> {
 }
 
 const TOOL_NAMES: &[&str] = &[
-    "store_memory", "search_memories", "recall_memory", "get_memory",
-    "forget_memory", "forget_all", "relate_memories", "get_related",
-    "find_path", "get_subgraph", "find_contradictions", "write_inference",
-    "propagate_belief", "extract_facts", "compress_memory",
-    "consolidate_memories", "detect_interference", "assemble_context",
-    "check_stream", "detect_phantoms", "register_entity", "resolve_phantom",
-    "record_pain", "get_cognitive_state", "record_trajectory",
-    "predict_topics", "ingest_conversation", "get_stats",
-    "evaluate_archival", "apply_decay", "process_turn", "gdpr_forget",
+    "store_memory",
+    "search_memories",
+    "recall_memory",
+    "get_memory",
+    "forget_memory",
+    "forget_all",
+    "relate_memories",
+    "get_related",
+    "find_path",
+    "get_subgraph",
+    "find_contradictions",
+    "write_inference",
+    "propagate_belief",
+    "extract_facts",
+    "compress_memory",
+    "consolidate_memories",
+    "detect_interference",
+    "assemble_context",
+    "check_stream",
+    "detect_phantoms",
+    "register_entity",
+    "resolve_phantom",
+    "record_pain",
+    "get_cognitive_state",
+    "record_trajectory",
+    "predict_topics",
+    "ingest_conversation",
+    "get_stats",
+    "evaluate_archival",
+    "apply_decay",
+    "process_turn",
+    "gdpr_forget",
 ];
 
 const AGENT_INSTRUCTIONS: &str = r#"# Memory
@@ -233,13 +256,19 @@ fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
         if content.contains("MenteDB") {
-            println!("  [skip] instructions already contain MenteDB: {}", path.display());
+            println!(
+                "  [skip] instructions already contain MenteDB: {}",
+                path.display()
+            );
             return Ok(());
         }
         let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
         use std::io::Write;
         write!(file, "\n{AGENT_INSTRUCTIONS}")?;
-        println!("  [updated] appended MenteDB instructions: {}", path.display());
+        println!(
+            "  [updated] appended MenteDB instructions: {}",
+            path.display()
+        );
     } else {
         write_if_missing(path, AGENT_INSTRUCTIONS, "agent instructions")?;
     }
@@ -260,8 +289,7 @@ fn setup_copilot(home: &str, binary: &str) -> anyhow::Result<()> {
 fn setup_claude(home: &str, binary: &str) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB for Claude Desktop...\n");
 
-    let config_dir = std::path::PathBuf::from(home)
-        .join("Library/Application Support/Claude");
+    let config_dir = std::path::PathBuf::from(home).join("Library/Application Support/Claude");
     merge_mcp_config(&config_dir.join("claude_desktop_config.json"), binary)?;
 
     println!("\nDone! Restart Claude Desktop to activate MenteDB memory.");

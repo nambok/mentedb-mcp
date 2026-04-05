@@ -22,6 +22,31 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     // Keep a reference to the DB for graceful shutdown
     let db_ref = server.db_ref();
+    let db_ref_signal = db_ref.clone();
+
+    // Spawn signal handler for SIGTERM/SIGINT
+    tokio::spawn(async move {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        let sigint = tokio::signal::ctrl_c();
+
+        tokio::select! {
+            _ = sigterm.recv() => {
+                tracing::info!("Received SIGTERM — flushing database");
+            }
+            _ = sigint => {
+                tracing::info!("Received SIGINT — flushing database");
+            }
+        }
+
+        let mut db = db_ref_signal.lock().await;
+        if let Err(e) = db.close() {
+            tracing::error!(error = %e, "Failed to close database on signal");
+        } else {
+            tracing::info!("Database flushed on signal");
+        }
+        std::process::exit(0);
+    });
 
     tracing::info!("Starting MCP server on stdio transport");
 
@@ -29,7 +54,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         tracing::error!("Server error: {:?}", e);
     })?;
 
-    service.waiting().await?;
+    // Don't propagate error — we must run shutdown even if waiting() fails
+    let _ = service.waiting().await;
 
     // Graceful shutdown: flush indexes, graph, and WAL to disk
     tracing::info!("Shutting down — flushing database to disk");

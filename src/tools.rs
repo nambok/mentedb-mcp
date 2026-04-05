@@ -1204,7 +1204,7 @@ impl MenteDbServer {
                 .unwrap_or(AgentId(Uuid::nil()));
             let merged = MemoryNode::new(
                 agent_id,
-                consolidated.new_type.clone(),
+                consolidated.new_type,
                 consolidated.summary.clone(),
                 consolidated.combined_embedding.clone(),
             );

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.5](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.4...mentedb-mcp-v0.2.5) (2026-04-05)
+
+
+### Features
+
+* LLM-as-extractor — remove second model extraction from process_turn ([466e583](https://github.com/nambok/mentedb-mcp/commit/466e583d4dfe29e007c23b17fd35771a24dc0b56))
+
 ## [0.2.4](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.3...mentedb-mcp-v0.2.4) (2026-04-05)
 
 

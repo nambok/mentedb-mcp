@@ -10,7 +10,7 @@ use mentedb_consolidation::{
     ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
     DecayEngine, FactExtractor, ForgetEngine, ForgetRequest, MemoryCompressor,
 };
-use mentedb_context::{AssemblyConfig, ContextAssembler, OutputFormat, ScoredMemory};
+use mentedb_context::{AssemblyConfig, ContextAssembler, DeltaTracker, OutputFormat, ScoredMemory};
 use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
 use mentedb_core::types::{AgentId, MemoryId};
@@ -351,6 +351,7 @@ pub struct MenteDbServer {
     pain_registry: Arc<Mutex<PainRegistry>>,
     phantom_tracker: Arc<Mutex<PhantomTracker>>,
     trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
+    delta_tracker: Arc<Mutex<DeltaTracker>>,
     #[allow(dead_code)]
     config: ServerConfig,
     #[allow(dead_code)]
@@ -382,6 +383,7 @@ impl MenteDbServer {
             pain_registry: Arc::new(Mutex::new(PainRegistry::new(100))),
             phantom_tracker: Arc::new(Mutex::new(PhantomTracker::new(PhantomConfig::default()))),
             trajectory_tracker: Arc::new(Mutex::new(TrajectoryTracker::new(100))),
+            delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             config,
             tool_router: Self::tool_router(),
         }
@@ -1540,19 +1542,42 @@ impl MenteDbServer {
             .filter(|(sim, _)| *sim > 0.3)
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        let top_context: Vec<serde_json::Value> = scored
+        let top_scored: Vec<&ScoredMemory> = scored.iter().take(10).map(|(_, sm)| *sm).collect();
+        let current_ids: Vec<MemoryId> = top_scored.iter().map(|sm| sm.memory.id).collect();
+
+        // Delta computation: only send what changed since last turn
+        let mut delta_tracker = self.delta_tracker.lock().await;
+        let delta = delta_tracker.compute_delta(&current_ids, &delta_tracker.last_served.clone());
+        delta_tracker.update(&current_ids);
+        drop(delta_tracker);
+
+        // Build context response: always send full context, annotate what's new
+        let context_items: Vec<serde_json::Value> = top_scored
             .iter()
             .take(5)
-            .map(|(score, sm)| {
+            .map(|sm| {
+                let score = scored
+                    .iter()
+                    .find(|(_, s)| s.memory.id == sm.memory.id)
+                    .map(|(s, _)| *s)
+                    .unwrap_or(0.0);
                 let mut val = memory_node_to_json(&sm.memory);
                 val["relevance_score"] = json!(score);
+                val["is_new"] = json!(delta.added.contains(&sm.memory.id));
                 if let Some(ctx) = &req.project_context {
-                    let has_tag = sm.memory.tags.iter().any(|t| t == ctx);
-                    val["same_project"] = json!(has_tag);
+                    val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
                 }
                 val
             })
             .collect();
+        let removed_ids: Vec<String> = delta.removed.iter().map(|id| id.to_string()).collect();
+        let context_response = json!({
+            "memories": context_items,
+            "count": context_items.len(),
+            "new_count": delta.added.len(),
+            "removed": removed_ids,
+            "unchanged_count": delta.unchanged.len(),
+        });
 
         // 2. Check pain signals
         let pain_registry = self.pain_registry.lock().await;
@@ -1682,7 +1707,8 @@ impl MenteDbServer {
 
         tracing::info!(
             turn_id = req.turn_id,
-            context_found = top_context.len(),
+            context_count = context_items.len(),
+            new_memories = delta.added.len(),
             memories_stored = stored_ids.len(),
             inference_actions = inference_results.len(),
             pain_warnings = pain_warnings.len(),
@@ -1693,7 +1719,7 @@ impl MenteDbServer {
         Ok(CallToolResult::success(vec![Content::text(
             json!({
                 "turn_id": req.turn_id,
-                "relevant_context": top_context,
+                "context": context_response,
                 "memories_stored": stored_ids,
                 "inference_results": inference_results,
                 "pain_warnings": pain_warnings,

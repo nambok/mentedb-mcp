@@ -64,9 +64,48 @@ Add to `.vscode/mcp.json` in your project:
 }
 ```
 
-## Available Tools (30 tools)
+### GitHub Copilot CLI
 
-### Core Memory (7 tools)
+Add to `~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mentedb": {
+      "command": "mentedb-mcp",
+      "args": ["--data-dir", "~/.mentedb"]
+    }
+  }
+}
+```
+
+## Embeddings
+
+The server uses local Candle embeddings by default with the `all-MiniLM-L6-v2` model (384 dimensions). No API key needed for semantic search. The model auto-downloads from Hugging Face on first use (~80MB) and is cached locally. If the download fails (offline), it falls back to hash embeddings.
+
+## LLM Extraction (Optional)
+
+Embeddings power search. For LLM based memory extraction via `ingest_conversation`, you can optionally configure an API key:
+
+```json
+{
+  "mcpServers": {
+    "mentedb": {
+      "command": "mentedb-mcp",
+      "args": ["--data-dir", "~/.mentedb", "--llm-provider", "anthropic"],
+      "env": {
+        "MENTEDB_LLM_API_KEY": "sk-ant-..."
+      }
+    }
+  }
+}
+```
+
+Supported providers: `openai`, `anthropic`, `ollama`, `mock` (default). Without an API key, `ingest_conversation` uses the mock provider which does basic keyword extraction.
+
+## Available Tools (31 tools)
+
+### Core Memory (8 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -76,6 +115,7 @@ Add to `.vscode/mcp.json` in your project:
 | `search_memories` | Semantic similarity search with optional type filtering and result limit. |
 | `relate_memories` | Create a typed edge between two memories (caused, contradicts, supports, etc). |
 | `forget_memory` | Delete a memory from the database with optional reason. |
+| `forget_all` | Delete ALL memories permanently. Requires `confirm='CONFIRM'` safety check. |
 | `ingest_conversation` | Extract structured memories from raw conversation text via LLM provider. |
 
 Memory types: `episodic`, `semantic`, `procedural`, `anti_pattern`, `reasoning`, `correction`.
@@ -134,7 +174,7 @@ mentedb-mcp [OPTIONS]
 
 Options:
   --data-dir <PATH>           Data directory path [default: ~/.mentedb]
-  --embedding-dim <DIM>       Embedding vector dimension [default: 128]
+  --embedding-dim <DIM>       Embedding vector dimension [default: 384]
   --llm-provider <PROVIDER>   LLM provider for extraction: openai, anthropic, ollama, mock [default: mock]
   --llm-api-key <KEY>         API key for the LLM provider (overrides env var)
   --llm-model <MODEL>         Model name override for the LLM provider

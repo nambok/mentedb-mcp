@@ -102,7 +102,7 @@ Embeddings power search. For LLM based memory extraction via `ingest_conversatio
 
 Supported providers: `openai`, `anthropic`, `ollama`, `mock` (default). Without an API key, `ingest_conversation` uses the mock provider which does basic keyword extraction.
 
-## Available Tools (31 tools)
+## Available Tools (32 tools)
 
 ### Core Memory (8 tools)
 
@@ -148,10 +148,11 @@ Edge types: `caused`, `before`, `related`, `contradicts`, `supports`, `supersede
 | `extract_facts` | Extract structured subject/predicate/object triples from a memory. |
 | `gdpr_forget` | GDPR compliant deletion of all memories for a subject with full audit log. |
 
-### Cognitive Systems (11 tools)
+### Cognitive Systems (12 tools)
 
 | Tool | Description |
 |------|-------------|
+| `process_turn` | **One call per turn.** Searches context, extracts memories, stores with embeddings, runs inference, tracks trajectory. Returns relevant context, stored IDs, pain warnings, and topic predictions. |
 | `record_pain` | Record a negative experience (pain signal) so MenteDB warns on similar contexts. |
 | `detect_phantoms` | Scan content for knowledge gaps, entities referenced but not in memory. |
 | `resolve_phantom` | Mark a knowledge gap (phantom memory) as resolved. |

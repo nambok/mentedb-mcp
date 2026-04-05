@@ -20,7 +20,7 @@ mentedb-core = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-graph = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-cognitive = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-context = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-embedding = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb-embedding = { git = "https://github.com/nambok/mentedb", branch = "main", features = ["local"] }
 mentedb-extraction = { git = "https://github.com/nambok/mentedb", branch = "main" }
 mentedb-consolidation = { git = "https://github.com/nambok/mentedb", branch = "main" }
 anyhow = "1"

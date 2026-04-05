@@ -160,7 +160,6 @@ fn test_initialize_returns_server_info() {
 }
 
 #[test]
-#[ignore = "recall_memory via MQL does not find memories in fresh temp data dirs"]
 fn test_store_and_recall_memory() {
     let mut proc = McpProcess::spawn("store_recall");
     proc.initialize();
@@ -335,7 +334,6 @@ fn test_search_with_type_filter() {
 }
 
 #[test]
-#[ignore = "cognitive state is in-memory only, pain signals not returned via MCP in test env"]
 fn test_record_pain_and_cognitive_state() {
     let mut proc = McpProcess::spawn("pain");
     proc.initialize();

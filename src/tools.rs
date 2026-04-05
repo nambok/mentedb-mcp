@@ -468,21 +468,24 @@ fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
     })
 }
 
-/// Retrieve all memories from the database via a broad MQL recall.
-/// Workaround until MenteDb exposes a public get_by_id method.
+/// Retrieve all memories from the database using direct page_map access.
 fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
-    match db.recall("RECALL memories LIMIT 10000") {
-        Ok(window) => window.blocks.into_iter().flat_map(|b| b.memories).collect(),
-        Err(_) => Vec::new(),
-    }
+    db.memory_ids()
+        .into_iter()
+        .filter_map(|id| {
+            db.get_memory(id)
+                .ok()
+                .map(|memory| ScoredMemory { memory, score: 1.0 })
+        })
+        .collect()
 }
 
-/// Find a specific memory by UUID using a broad recall scan.
+/// Find a specific memory by UUID using direct page_map lookup.
 fn find_memory_by_id(db: &mut MenteDb, target_id: Uuid) -> Result<Option<ScoredMemory>, String> {
-    let all = recall_all_memories(db);
-    Ok(all
-        .into_iter()
-        .find(|sm| sm.memory.id == MemoryId(target_id)))
+    match db.get_memory(MemoryId(target_id)) {
+        Ok(memory) => Ok(Some(ScoredMemory { memory, score: 1.0 })),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Store extraction results (accepted + contradictions) into the database.
@@ -920,21 +923,13 @@ impl MenteDbServer {
         description = "Get database statistics including memory count, edge count, and type breakdown."
     )]
     async fn get_stats(&self) -> Result<CallToolResult, McpError> {
-        let mut db = self.db.lock().await;
-        // Use a broad recall to estimate memory count
-        let memory_count = match db.recall("RECALL memories LIMIT 10000") {
-            Ok(window) => window
-                .blocks
-                .iter()
-                .map(|b| b.memories.len())
-                .sum::<usize>(),
-            Err(_) => 0,
-        };
+        let db = self.db.lock().await;
+        let memory_count = db.memory_count();
         let result = json!({
             "status": "operational",
             "engine": "mentedb",
             "version": env!("CARGO_PKG_VERSION"),
-            "memory_count_estimate": memory_count,
+            "memory_count": memory_count,
         });
         Ok(CallToolResult::success(vec![Content::text(
             result.to_string(),
@@ -970,7 +965,7 @@ impl MenteDbServer {
         let trajectory = self.trajectory_tracker.lock().await;
 
         let active_pain: Vec<serde_json::Value> = pain
-            .get_pain_for_context(&[])
+            .all_signals()
             .iter()
             .map(|s| {
                 json!({
@@ -2452,20 +2447,13 @@ impl ServerHandler for MenteDbServer {
         let uri_str = uri.as_str();
 
         if uri_str == "mentedb://stats" {
-            let mut db = self.db.lock().await;
-            let memory_count = match db.recall("RECALL memories LIMIT 10000") {
-                Ok(window) => window
-                    .blocks
-                    .iter()
-                    .map(|b| b.memories.len())
-                    .sum::<usize>(),
-                Err(_) => 0,
-            };
+            let db = self.db.lock().await;
+            let memory_count = db.memory_count();
             let stats = json!({
                 "status": "operational",
                 "engine": "mentedb",
                 "version": env!("CARGO_PKG_VERSION"),
-                "memory_count_estimate": memory_count,
+                "memory_count": memory_count,
             });
             return Ok(ReadResourceResult::new(vec![ResourceContents::text(
                 stats.to_string(),

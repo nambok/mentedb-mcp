@@ -2,12 +2,15 @@ use std::sync::Arc;
 
 use mentedb::MenteDb;
 use mentedb_cognitive::{PainRegistry, PhantomConfig, PhantomTracker, TrajectoryTracker};
+use mentedb_context::{AssemblyConfig, ContextAssembler, OutputFormat, ScoredMemory};
 use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
 use mentedb_core::{MemoryEdge, MemoryNode};
 use mentedb_embedding::HashEmbeddingProvider;
 use mentedb_embedding::provider::EmbeddingProvider;
-use mentedb_extraction::{ExtractionConfig, ExtractionPipeline, MockExtractionProvider};
+use mentedb_extraction::{
+    ExtractionConfig, ExtractionPipeline, MockExtractionProvider, ProcessedExtractionResult,
+};
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -31,6 +34,8 @@ pub struct StoreMemoryRequest {
         description = "Memory type: episodic, semantic, procedural, anti_pattern, reasoning, or correction"
     )]
     pub memory_type: String,
+    #[schemars(description = "Optional agent UUID that owns this memory (defaults to nil UUID)")]
+    pub agent_id: Option<String>,
     #[schemars(description = "Optional tags for categorization")]
     pub tags: Option<Vec<String>>,
     #[schemars(description = "Optional key-value metadata")]
@@ -52,7 +57,6 @@ pub struct SearchMemoriesRequest {
     #[schemars(
         description = "Optional memory type filter: episodic, semantic, procedural, anti_pattern, reasoning, correction"
     )]
-    #[allow(dead_code)]
     pub memory_type: Option<String>,
 }
 
@@ -66,6 +70,8 @@ pub struct RelateMemoriesRequest {
         description = "Relationship type: caused, before, related, contradicts, supports, supersedes, derived, part_of"
     )]
     pub edge_type: String,
+    #[schemars(description = "Optional edge weight (default: 1.0)")]
+    pub weight: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -104,6 +110,14 @@ pub struct IngestConversationRequest {
     pub provider: Option<String>,
     #[schemars(description = "API key for the LLM provider (uses env var if not provided)")]
     pub api_key: Option<String>,
+    #[schemars(description = "Optional agent UUID that owns extracted memories (defaults to nil UUID)")]
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMemoryRequest {
+    #[schemars(description = "The UUID of the memory to retrieve")]
+    pub id: String,
 }
 
 /// MenteDB MCP server state holding the database and cognitive subsystems.
@@ -167,6 +181,105 @@ fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![Content::text(msg.to_string())]))
 }
 
+/// Serialize a MemoryNode to a JSON value with all fields.
+fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
+    let attrs: serde_json::Map<String, serde_json::Value> = mem
+        .attributes
+        .iter()
+        .map(|(k, v)| {
+            let val = match v {
+                AttributeValue::String(s) => serde_json::Value::String(s.clone()),
+                AttributeValue::Integer(i) => json!(*i),
+                AttributeValue::Float(f) => json!(*f),
+                AttributeValue::Boolean(b) => json!(*b),
+                AttributeValue::Bytes(b) => json!(format!("<{} bytes>", b.len())),
+            };
+            (k.clone(), val)
+        })
+        .collect();
+    json!({
+        "id": mem.id.to_string(),
+        "agent_id": mem.agent_id.to_string(),
+        "content": mem.content,
+        "memory_type": format!("{:?}", mem.memory_type),
+        "tags": mem.tags,
+        "attributes": attrs,
+        "created_at": mem.created_at,
+        "accessed_at": mem.accessed_at,
+        "access_count": mem.access_count,
+        "salience": mem.salience,
+        "confidence": mem.confidence,
+        "space_id": mem.space_id.to_string(),
+    })
+}
+
+/// Retrieve all memories from the database via a broad MQL recall.
+/// Workaround until MenteDb exposes a public get_by_id method.
+fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
+    match db.recall("RECALL memories LIMIT 10000") {
+        Ok(window) => window
+            .blocks
+            .into_iter()
+            .flat_map(|b| b.memories)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Find a specific memory by UUID using a broad recall scan.
+fn find_memory_by_id(
+    db: &mut MenteDb,
+    target_id: Uuid,
+) -> Result<Option<ScoredMemory>, String> {
+    let all = recall_all_memories(db);
+    Ok(all.into_iter().find(|sm| sm.memory.id == target_id))
+}
+
+/// Store extraction results (accepted + contradictions) into the database.
+fn store_extraction_results(
+    result: &ProcessedExtractionResult,
+    db: &mut MenteDb,
+    embedding_provider: &HashEmbeddingProvider,
+    agent_id: Uuid,
+) -> Result<Vec<String>, McpError> {
+    let mut stored_ids = Vec::new();
+
+    for memory in &result.to_store {
+        let mem_type =
+            mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+        let embedding = embedding_provider
+            .embed(&memory.content)
+            .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
+        let mut node = MemoryNode::new(agent_id, mem_type, memory.content.clone(), embedding);
+        node.tags = memory.tags.clone();
+        let id = node.id;
+        if let Err(e) = db.store(node) {
+            tracing::error!(error = %e, "failed to store extracted memory");
+            continue;
+        }
+        stored_ids.push(id.to_string());
+    }
+
+    for (memory, _findings) in &result.contradictions {
+        let mem_type =
+            mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
+        let embedding = embedding_provider
+            .embed(&memory.content)
+            .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
+        let mut node = MemoryNode::new(agent_id, mem_type, memory.content.clone(), embedding);
+        node.tags = memory.tags.clone();
+        node.tags.push("has_contradiction".to_string());
+        let id = node.id;
+        if let Err(e) = db.store(node) {
+            tracing::error!(error = %e, "failed to store contradicting memory");
+            continue;
+        }
+        stored_ids.push(id.to_string());
+    }
+
+    Ok(stored_ids)
+}
+
 #[rmcp::tool_router]
 impl MenteDbServer {
     #[rmcp::tool(
@@ -185,7 +298,13 @@ impl MenteDbServer {
             .embedding_provider
             .embed(&req.content)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let agent_id = Uuid::nil();
+        let agent_id = match req.agent_id.as_deref() {
+            Some(id_str) => match parse_uuid(id_str) {
+                Ok(id) => id,
+                Err(e) => return error_result(&e),
+            },
+            None => Uuid::nil(),
+        };
         let mut node = MemoryNode::new(agent_id, memory_type, req.content, embedding);
 
         if let Some(tags) = req.tags {
@@ -241,23 +360,16 @@ impl MenteDbServer {
         };
 
         let mut db = self.db.lock().await;
-        let query = format!("LOOKUP {id}");
-        match db.recall(&query) {
-            Ok(window) => {
-                if window.blocks.is_empty() {
-                    tracing::warn!(id = %id, "memory not found");
-                    return error_result(&format!("Memory not found: {id}"));
-                }
-                tracing::info!(id = %id, blocks = window.blocks.len(), "memory recalled");
-                let result = json!({
-                    "id": id.to_string(),
-                    "blocks": window.blocks.len(),
-                    "total_tokens": window.total_tokens,
-                    "format": window.format,
-                });
+        match find_memory_by_id(&mut db, id) {
+            Ok(Some(sm)) => {
+                tracing::info!(id = %id, "memory recalled");
                 Ok(CallToolResult::success(vec![Content::text(
-                    result.to_string(),
+                    memory_node_to_json(&sm.memory).to_string(),
                 )]))
+            }
+            Ok(None) => {
+                tracing::warn!(id = %id, "memory not found");
+                error_result(&format!("Memory not found: {id}"))
             }
             Err(e) => {
                 tracing::error!(id = %id, error = %e, "recall_memory failed");
@@ -279,14 +391,48 @@ impl MenteDbServer {
             .embed(&req.query)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
 
+        let type_filter = match req.memory_type.as_deref() {
+            Some(t) => Some(parse_memory_type(t).map_err(|e| {
+                McpError::internal_error(format!("Invalid memory_type filter: {e}"), None)
+            })?),
+            None => None,
+        };
+
         let mut db = self.db.lock().await;
-        match db.recall_similar(&embedding, k) {
+        // Fetch extra candidates when filtering by type since some will be excluded
+        let fetch_k = if type_filter.is_some() { k * 3 } else { k };
+        match db.recall_similar(&embedding, fetch_k) {
             Ok(results) => {
                 tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
-                let items: Vec<serde_json::Value> = results
-                    .iter()
-                    .map(|(id, score)| json!({ "id": id.to_string(), "score": score }))
-                    .collect();
+                // Retrieve full memory data via broad recall for content enrichment
+                let all_memories = recall_all_memories(&mut db);
+                let mut items: Vec<serde_json::Value> = Vec::new();
+                for (id, score) in &results {
+                    if let Some(mem) = all_memories.iter().find(|sm| sm.memory.id == *id) {
+                        if let Some(ref tf) = type_filter {
+                            if mem.memory.memory_type != *tf {
+                                continue;
+                            }
+                        }
+                        items.push(json!({
+                            "id": id.to_string(),
+                            "score": score,
+                            "content": mem.memory.content,
+                            "memory_type": format!("{:?}", mem.memory.memory_type),
+                            "tags": mem.memory.tags,
+                            "salience": mem.memory.salience,
+                        }));
+                    } else {
+                        // Memory not in recall window; include with limited info
+                        if type_filter.is_some() {
+                            continue; // can't verify type, skip
+                        }
+                        items.push(json!({ "id": id.to_string(), "score": score }));
+                    }
+                    if items.len() >= k {
+                        break;
+                    }
+                }
                 Ok(CallToolResult::success(vec![Content::text(
                     json!({ "results": items, "count": items.len() }).to_string(),
                 )]))
@@ -325,7 +471,7 @@ impl MenteDbServer {
             source: from_id,
             target: to_id,
             edge_type,
-            weight: 1.0,
+            weight: req.weight.unwrap_or(1.0),
             created_at: now,
         };
 
@@ -386,24 +532,74 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<AssembleContextRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let format_str = req.format.as_deref().unwrap_or("structured");
+        let format = match req.format.as_deref().unwrap_or("structured") {
+            "compact" => OutputFormat::Compact,
+            "delta" => OutputFormat::Delta,
+            _ => OutputFormat::Structured,
+        };
+
         let embedding = self
             .embedding_provider
             .embed(&req.query)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let k = 50;
 
         let mut db = self.db.lock().await;
-        match db.recall_similar(&embedding, k) {
+        match db.recall_similar(&embedding, 50) {
             Ok(results) => {
+                // Fetch full memory data for scored memories
+                let all_memories = recall_all_memories(&mut db);
+                let scored_memories: Vec<ScoredMemory> = results
+                    .iter()
+                    .filter_map(|(id, score)| {
+                        all_memories
+                            .iter()
+                            .find(|sm| sm.memory.id == *id)
+                            .map(|sm| ScoredMemory {
+                                memory: sm.memory.clone(),
+                                score: *score,
+                            })
+                    })
+                    .collect();
+
+                let config = AssemblyConfig {
+                    token_budget: req.token_budget,
+                    format,
+                    include_edges: false,
+                    include_metadata: true,
+                };
+
+                let window = ContextAssembler::assemble(scored_memories, vec![], &config);
+
+                let blocks_json: Vec<serde_json::Value> = window
+                    .blocks
+                    .iter()
+                    .map(|b| {
+                        json!({
+                            "zone": format!("{:?}", b.zone),
+                            "memory_count": b.memories.len(),
+                            "estimated_tokens": b.estimated_tokens,
+                            "memories": b.memories.iter().map(|sm| json!({
+                                "id": sm.memory.id.to_string(),
+                                "content": sm.memory.content,
+                                "memory_type": format!("{:?}", sm.memory.memory_type),
+                                "score": sm.score,
+                            })).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+
                 let result = json!({
                     "query": req.query,
                     "token_budget": req.token_budget,
-                    "format": format_str,
-                    "candidate_count": results.len(),
-                    "results": results.iter().map(|(id, score)| {
-                        json!({ "id": id.to_string(), "score": score })
-                    }).collect::<Vec<_>>(),
+                    "total_tokens": window.total_tokens,
+                    "format": window.format,
+                    "blocks": blocks_json,
+                    "metadata": {
+                        "total_candidates": window.metadata.total_candidates,
+                        "included_count": window.metadata.included_count,
+                        "excluded_count": window.metadata.excluded_count,
+                        "zones_used": window.metadata.zones_used,
+                    },
                 });
                 Ok(CallToolResult::success(vec![Content::text(
                     result.to_string(),
@@ -417,10 +613,21 @@ impl MenteDbServer {
         description = "Get database statistics including memory count, edge count, and type breakdown."
     )]
     async fn get_stats(&self) -> Result<CallToolResult, McpError> {
+        let mut db = self.db.lock().await;
+        // Use a broad recall to estimate memory count
+        let memory_count = match db.recall("RECALL memories LIMIT 10000") {
+            Ok(window) => window
+                .blocks
+                .iter()
+                .map(|b| b.memories.len())
+                .sum::<usize>(),
+            Err(_) => 0,
+        };
         let result = json!({
             "status": "operational",
             "engine": "mentedb",
-            "version": "0.1.1",
+            "version": env!("CARGO_PKG_VERSION"),
+            "memory_count_estimate": memory_count,
         });
         Ok(CallToolResult::success(vec![Content::text(
             result.to_string(),
@@ -435,6 +642,7 @@ impl MenteDbServer {
         Parameters(req): Parameters<RegisterEntityRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut tracker = self.phantom_tracker.lock().await;
+        tracing::info!(name = %req.name, entity_type = %req.entity_type, "registering entity");
         tracker.register_entity(&req.name);
         Ok(CallToolResult::success(vec![Content::text(
             json!({
@@ -503,6 +711,14 @@ impl MenteDbServer {
             .or_else(|| std::env::var("MENTEDB_LLM_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
+        let agent_id = match req.agent_id.as_deref() {
+            Some(id_str) => match parse_uuid(id_str) {
+                Ok(id) => id,
+                Err(e) => return error_result(&e),
+            },
+            None => Uuid::nil(),
+        };
+
         let config = match provider_name.to_lowercase().as_str() {
             "openai" => {
                 let key = match api_key {
@@ -535,171 +751,111 @@ impl MenteDbServer {
             }
         };
 
-        // For non-mock providers, we would use HttpExtractionProvider.
-        // For now, the mock path demonstrates the full pipeline.
-        if provider_name == "mock" {
+        // Gather existing memories for dedup/contradiction checks
+        let existing_memories = {
+            let mut db = self.db.lock().await;
+            let conv_embedding = self
+                .embedding_provider
+                .embed(&req.conversation)
+                .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
+            let similar = db.recall_similar(&conv_embedding, 20).unwrap_or_default();
+            let all_mems = recall_all_memories(&mut db);
+            similar
+                .iter()
+                .filter_map(|(id, _)| {
+                    all_mems
+                        .iter()
+                        .find(|sm| sm.memory.id == *id)
+                        .map(|sm| sm.memory.clone())
+                })
+                .collect::<Vec<MemoryNode>>()
+        };
+
+        let result = if provider_name == "mock" {
             let mock_provider = MockExtractionProvider::with_realistic_response();
             let pipeline = ExtractionPipeline::new(mock_provider, config);
-
-            // Gather existing memories for dedup/contradiction checks
-            let existing_memories = Vec::new();
-
-            let result = pipeline
+            pipeline
                 .process(
                     &req.conversation,
                     &existing_memories,
                     self.embedding_provider.as_ref(),
                 )
                 .await
-                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?;
-
-            // Store accepted memories
-            let mut stored_ids = Vec::new();
-            let mut db = self.db.lock().await;
-            for memory in &result.to_store {
-                let mem_type =
-                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
-                let embedding = self
-                    .embedding_provider
-                    .embed(&memory.content)
-                    .map_err(|e| {
-                        McpError::internal_error(format!("Embedding failed: {e}"), None)
-                    })?;
-                let mut node =
-                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
-                node.tags = memory.tags.clone();
-                let id = node.id;
-                if let Err(e) = db.store(node) {
-                    tracing::error!(error = %e, "failed to store extracted memory");
-                    continue;
-                }
-                stored_ids.push(id.to_string());
-            }
-
-            // Also store contradicting memories (with a note)
-            for (memory, _findings) in &result.contradictions {
-                let mem_type =
-                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
-                let embedding = self
-                    .embedding_provider
-                    .embed(&memory.content)
-                    .map_err(|e| {
-                        McpError::internal_error(format!("Embedding failed: {e}"), None)
-                    })?;
-                let mut node =
-                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
-                node.tags = memory.tags.clone();
-                node.tags.push("has_contradiction".to_string());
-                let id = node.id;
-                if let Err(e) = db.store(node) {
-                    tracing::error!(error = %e, "failed to store contradicting memory");
-                    continue;
-                }
-                stored_ids.push(id.to_string());
-            }
-
-            let stats = &result.stats;
-            tracing::info!(
-                stored = stored_ids.len(),
-                rejected_quality = stats.rejected_quality,
-                rejected_duplicate = stats.rejected_duplicate,
-                contradictions = stats.contradictions_found,
-                "conversation ingestion complete"
-            );
-
-            let response = json!({
-                "status": "complete",
-                "stats": {
-                    "total_extracted": stats.total_extracted,
-                    "accepted": stats.accepted,
-                    "rejected_quality": stats.rejected_quality,
-                    "rejected_duplicate": stats.rejected_duplicate,
-                    "contradictions_found": stats.contradictions_found,
-                },
-                "stored_ids": stored_ids,
-            });
-
-            Ok(CallToolResult::success(vec![Content::text(
-                response.to_string(),
-            )]))
+                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?
         } else {
-            // For real providers, construct HttpExtractionProvider
             let http_provider =
                 mentedb_extraction::HttpExtractionProvider::new(config).map_err(|e| {
                     McpError::internal_error(format!("Provider init failed: {e}"), None)
                 })?;
             let pipeline = ExtractionPipeline::new(http_provider, ExtractionConfig::default());
-
-            let existing_memories = Vec::new();
-
-            let result = pipeline
+            pipeline
                 .process(
                     &req.conversation,
                     &existing_memories,
                     self.embedding_provider.as_ref(),
                 )
                 .await
-                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?;
+                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?
+        };
 
-            let mut stored_ids = Vec::new();
-            let mut db = self.db.lock().await;
-            for memory in &result.to_store {
-                let mem_type =
-                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
-                let embedding = self
-                    .embedding_provider
-                    .embed(&memory.content)
-                    .map_err(|e| {
-                        McpError::internal_error(format!("Embedding failed: {e}"), None)
-                    })?;
-                let mut node =
-                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
-                node.tags = memory.tags.clone();
-                let id = node.id;
-                if let Err(e) = db.store(node) {
-                    tracing::error!(error = %e, "failed to store extracted memory");
-                    continue;
-                }
-                stored_ids.push(id.to_string());
+        let mut db = self.db.lock().await;
+        let stored_ids =
+            store_extraction_results(&result, &mut db, &self.embedding_provider, agent_id)?;
+
+        let stats = &result.stats;
+        tracing::info!(
+            stored = stored_ids.len(),
+            rejected_quality = stats.rejected_quality,
+            rejected_duplicate = stats.rejected_duplicate,
+            contradictions = stats.contradictions_found,
+            "conversation ingestion complete"
+        );
+
+        let response = json!({
+            "status": "complete",
+            "stats": {
+                "total_extracted": stats.total_extracted,
+                "accepted": stats.accepted,
+                "rejected_quality": stats.rejected_quality,
+                "rejected_duplicate": stats.rejected_duplicate,
+                "contradictions_found": stats.contradictions_found,
+            },
+            "stored_ids": stored_ids,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            response.to_string(),
+        )]))
+    }
+
+    #[rmcp::tool(
+        description = "Get a specific memory by UUID. Returns all fields including content, type, tags, metadata, timestamps, salience, and confidence."
+    )]
+    async fn get_memory(
+        &self,
+        Parameters(req): Parameters<GetMemoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut db = self.db.lock().await;
+        match find_memory_by_id(&mut db, id) {
+            Ok(Some(sm)) => {
+                tracing::info!(id = %id, "memory retrieved");
+                Ok(CallToolResult::success(vec![Content::text(
+                    memory_node_to_json(&sm.memory).to_string(),
+                )]))
             }
-
-            for (memory, _findings) in &result.contradictions {
-                let mem_type =
-                    mentedb_extraction::map_extraction_type_to_memory_type(&memory.memory_type);
-                let embedding = self
-                    .embedding_provider
-                    .embed(&memory.content)
-                    .map_err(|e| {
-                        McpError::internal_error(format!("Embedding failed: {e}"), None)
-                    })?;
-                let mut node =
-                    MemoryNode::new(Uuid::nil(), mem_type, memory.content.clone(), embedding);
-                node.tags = memory.tags.clone();
-                node.tags.push("has_contradiction".to_string());
-                let id = node.id;
-                if let Err(e) = db.store(node) {
-                    tracing::error!(error = %e, "failed to store contradicting memory");
-                    continue;
-                }
-                stored_ids.push(id.to_string());
+            Ok(None) => {
+                tracing::warn!(id = %id, "memory not found");
+                error_result(&format!("Memory not found: {id}"))
             }
-
-            let stats = &result.stats;
-            let response = json!({
-                "status": "complete",
-                "stats": {
-                    "total_extracted": stats.total_extracted,
-                    "accepted": stats.accepted,
-                    "rejected_quality": stats.rejected_quality,
-                    "rejected_duplicate": stats.rejected_duplicate,
-                    "contradictions_found": stats.contradictions_found,
-                },
-                "stored_ids": stored_ids,
-            });
-
-            Ok(CallToolResult::success(vec![Content::text(
-                response.to_string(),
-            )]))
+            Err(e) => {
+                tracing::error!(id = %id, error = %e, "get_memory failed");
+                error_result(&format!("Failed to get memory: {e}"))
+            }
         }
     }
 }
@@ -751,7 +907,7 @@ impl ServerHandler for MenteDbServer {
         if uri_str == "mentedb://stats" {
             let stats = json!({
                 "engine": "mentedb",
-                "version": "0.1.1",
+                "version": env!("CARGO_PKG_VERSION"),
                 "status": "operational",
             });
             return Ok(ReadResourceResult::new(vec![ResourceContents::text(
@@ -780,18 +936,19 @@ impl ServerHandler for MenteDbServer {
             })?;
 
             let mut db = self.db.lock().await;
-            let query = format!("LOOKUP {id}");
-            match db.recall(&query) {
-                Ok(window) => {
-                    let result = json!({
-                        "id": id.to_string(),
-                        "blocks": window.blocks.len(),
-                        "total_tokens": window.total_tokens,
-                    });
+            match find_memory_by_id(&mut db, id) {
+                Ok(Some(sm)) => {
+                    let result = memory_node_to_json(&sm.memory);
                     return Ok(ReadResourceResult::new(vec![ResourceContents::text(
                         result.to_string(),
                         uri.clone(),
                     )]));
+                }
+                Ok(None) => {
+                    return Err(McpError::resource_not_found(
+                        "memory_not_found",
+                        Some(json!({ "error": format!("Memory not found: {id}") })),
+                    ));
                 }
                 Err(e) => {
                     return Err(McpError::resource_not_found(

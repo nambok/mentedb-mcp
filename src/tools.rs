@@ -316,6 +316,7 @@ pub struct MenteDbServer {
     trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
     #[allow(dead_code)]
     config: ServerConfig,
+    #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
 }
 
@@ -596,10 +597,10 @@ impl MenteDbServer {
                 let mut items: Vec<serde_json::Value> = Vec::new();
                 for (id, score) in &results {
                     if let Some(mem) = all_memories.iter().find(|sm| sm.memory.id == *id) {
-                        if let Some(ref tf) = type_filter {
-                            if mem.memory.memory_type != *tf {
-                                continue;
-                            }
+                        if let Some(ref tf) = type_filter
+                            && mem.memory.memory_type != *tf
+                        {
+                            continue;
                         }
                         items.push(json!({
                             "id": id.to_string(),
@@ -892,9 +893,13 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<IngestConversationRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let provider_name = req.provider.as_deref().unwrap_or("mock");
+        let provider_name = req
+            .provider
+            .as_deref()
+            .unwrap_or(&self.config.llm_provider);
         let api_key = req
             .api_key
+            .or_else(|| self.config.llm_api_key.clone())
             .or_else(|| std::env::var("MENTEDB_LLM_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
@@ -1784,10 +1789,10 @@ impl MenteDbServer {
                 continue;
             }
             for (target, edge) in csr.outgoing(current) {
-                if let Some(ref filter) = edge_filter {
-                    if edge.edge_type != *filter {
-                        continue;
-                    }
+                if let Some(ref filter) = edge_filter
+                    && edge.edge_type != *filter
+                {
+                    continue;
                 }
                 let next_depth = current_depth + 1;
                 if visited.insert(target) {
@@ -1802,10 +1807,10 @@ impl MenteDbServer {
                 }
             }
             for (source, edge) in csr.incoming(current) {
-                if let Some(ref filter) = edge_filter {
-                    if edge.edge_type != *filter {
-                        continue;
-                    }
+                if let Some(ref filter) = edge_filter
+                    && edge.edge_type != *filter
+                {
+                    continue;
                 }
                 let next_depth = current_depth + 1;
                 if visited.insert(source) {
@@ -2039,10 +2044,26 @@ impl ServerHandler for MenteDbServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "MenteDB MCP server provides AI agent memory backed by a cognition aware database. \
-             Use store_memory to save knowledge, search_memories for semantic retrieval, \
-             relate_memories to build knowledge graphs, and get_cognitive_state to monitor \
-             pain signals, phantom memories, and trajectory predictions.",
+            "MenteDB MCP server provides AI agent memory backed by a cognition aware database.\n\
+             \n\
+             Core tools: store_memory, recall_memory, get_memory, search_memories, \
+             relate_memories, forget_memory, ingest_conversation.\n\
+             \n\
+             Context assembly: assemble_context with real token budgets and format control.\n\
+             \n\
+             Knowledge graph: get_related, find_path, get_subgraph, find_contradictions, \
+             propagate_belief.\n\
+             \n\
+             Consolidation: consolidate_memories, apply_decay, compress_memory, \
+             evaluate_archival, extract_facts, gdpr_forget.\n\
+             \n\
+             Cognitive systems: record_pain (pain signals), detect_phantoms / resolve_phantom \
+             (knowledge gaps), record_trajectory / predict_topics (trajectory tracking), \
+             detect_interference, check_stream (LLM output monitoring), write_inference \
+             (write time contradiction and edge detection), register_entity, get_cognitive_state.\n\
+             \n\
+             Extraction: ingest_conversation extracts structured memories from raw conversation \
+             text via LLM (openai, anthropic, ollama, or mock).",
         )
     }
 
@@ -2055,8 +2076,8 @@ impl ServerHandler for MenteDbServer {
             meta: None,
             next_cursor: None,
             resources: vec![
-                RawResource::new("mentedb://memories", "memories".to_string()).no_annotation(),
                 RawResource::new("mentedb://stats", "stats".to_string()).no_annotation(),
+                RawResource::new("mentedb://memories", "memories".to_string()).no_annotation(),
             ],
         })
     }
@@ -2070,10 +2091,20 @@ impl ServerHandler for MenteDbServer {
         let uri_str = uri.as_str();
 
         if uri_str == "mentedb://stats" {
+            let mut db = self.db.lock().await;
+            let memory_count = match db.recall("RECALL memories LIMIT 10000") {
+                Ok(window) => window
+                    .blocks
+                    .iter()
+                    .map(|b| b.memories.len())
+                    .sum::<usize>(),
+                Err(_) => 0,
+            };
             let stats = json!({
+                "status": "operational",
                 "engine": "mentedb",
                 "version": env!("CARGO_PKG_VERSION"),
-                "status": "operational",
+                "memory_count_estimate": memory_count,
             });
             return Ok(ReadResourceResult::new(vec![ResourceContents::text(
                 stats.to_string(),
@@ -2082,12 +2113,87 @@ impl ServerHandler for MenteDbServer {
         }
 
         if uri_str == "mentedb://memories" {
+            let tools: Vec<serde_json::Value> = vec![
+                json!({ "name": "store_memory", "description": "Store a new memory with content, type, tags, metadata" }),
+                json!({ "name": "get_memory", "description": "Retrieve a memory by UUID with full details" }),
+                json!({ "name": "recall_memory", "description": "Recall a specific memory by UUID" }),
+                json!({ "name": "search_memories", "description": "Semantic similarity search with type filtering" }),
+                json!({ "name": "relate_memories", "description": "Create typed edges between memories" }),
+                json!({ "name": "forget_memory", "description": "Delete a memory" }),
+                json!({ "name": "ingest_conversation", "description": "Extract memories from raw conversation via LLM" }),
+                json!({ "name": "assemble_context", "description": "Build optimized context window with token budget" }),
+                json!({ "name": "get_related", "description": "Traverse relationships from a memory" }),
+                json!({ "name": "find_path", "description": "Shortest path between memories" }),
+                json!({ "name": "get_subgraph", "description": "Extract local neighborhood subgraph" }),
+                json!({ "name": "find_contradictions", "description": "Find contradicting memories via graph edges" }),
+                json!({ "name": "propagate_belief", "description": "Propagate confidence changes through graph" }),
+                json!({ "name": "consolidate_memories", "description": "Cluster and merge similar memories" }),
+                json!({ "name": "apply_decay", "description": "Time-based salience decay" }),
+                json!({ "name": "compress_memory", "description": "Extract key sentences from a memory" }),
+                json!({ "name": "evaluate_archival", "description": "Categorize memories for keep/archive/delete" }),
+                json!({ "name": "extract_facts", "description": "Subject-predicate-object extraction" }),
+                json!({ "name": "gdpr_forget", "description": "GDPR-compliant deletion with audit" }),
+                json!({ "name": "record_pain", "description": "Record negative experiences for avoidance" }),
+                json!({ "name": "detect_phantoms", "description": "Find knowledge gaps in content" }),
+                json!({ "name": "resolve_phantom", "description": "Mark a knowledge gap as resolved" }),
+                json!({ "name": "record_trajectory", "description": "Track conversation turns for prediction" }),
+                json!({ "name": "predict_topics", "description": "Predict next topics from trajectory" }),
+                json!({ "name": "detect_interference", "description": "Find confusable memory pairs" }),
+                json!({ "name": "check_stream", "description": "Monitor LLM output for contradictions" }),
+                json!({ "name": "write_inference", "description": "Write-time contradiction and edge detection" }),
+                json!({ "name": "register_entity", "description": "Register entity for phantom detection" }),
+                json!({ "name": "get_cognitive_state", "description": "Full cognitive state snapshot" }),
+                json!({ "name": "get_stats", "description": "Database statistics" }),
+            ];
             let info = json!({
-                "description": "Memory listing",
-                "note": "Use search_memories tool for retrieval",
+                "description": "MenteDB memory tools",
+                "tool_count": tools.len(),
+                "tools": tools,
             });
             return Ok(ReadResourceResult::new(vec![ResourceContents::text(
                 info.to_string(),
+                uri.clone(),
+            )]));
+        }
+
+        if uri_str == "mentedb://cognitive/state" {
+            let pain = self.pain_registry.lock().await;
+            let phantom = self.phantom_tracker.lock().await;
+            let trajectory = self.trajectory_tracker.lock().await;
+
+            let active_pain: Vec<serde_json::Value> = pain
+                .get_pain_for_context(&[])
+                .iter()
+                .map(|s| {
+                    json!({
+                        "memory_id": s.memory_id.to_string(),
+                        "intensity": s.intensity,
+                        "description": s.description,
+                    })
+                })
+                .collect();
+
+            let phantoms: Vec<serde_json::Value> = phantom
+                .get_active_phantoms()
+                .iter()
+                .map(|p| {
+                    json!({
+                        "gap": p.gap_description,
+                        "priority": format!("{:?}", p.priority),
+                    })
+                })
+                .collect();
+
+            let trajectory_info = trajectory.get_resume_context();
+
+            let result = json!({
+                "pain_signals": active_pain,
+                "phantom_memories": phantoms,
+                "trajectory": trajectory_info,
+            });
+
+            return Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                result.to_string(),
                 uri.clone(),
             )]));
         }
@@ -2101,24 +2207,18 @@ impl ServerHandler for MenteDbServer {
             })?;
 
             let mut db = self.db.lock().await;
-            match find_memory_by_id(&mut db, id) {
-                Ok(Some(sm)) => {
-                    let result = memory_node_to_json(&sm.memory);
+            match db.get_memory(MemoryId(id)) {
+                Ok(mem) => {
+                    let result = memory_node_to_json(&mem);
                     return Ok(ReadResourceResult::new(vec![ResourceContents::text(
                         result.to_string(),
                         uri.clone(),
                     )]));
                 }
-                Ok(None) => {
-                    return Err(McpError::resource_not_found(
-                        "memory_not_found",
-                        Some(json!({ "error": format!("Memory not found: {id}") })),
-                    ));
-                }
                 Err(e) => {
                     return Err(McpError::resource_not_found(
                         "memory_not_found",
-                        Some(json!({ "error": e.to_string() })),
+                        Some(json!({ "error": format!("Memory not found: {e}") })),
                     ));
                 }
             }
@@ -2144,6 +2244,18 @@ impl ServerHandler for MenteDbServer {
                     name: "memory".to_string(),
                     title: None,
                     description: Some("Access a specific memory by UUID".to_string()),
+                    mime_type: Some("application/json".to_string()),
+                    icons: None,
+                }
+                .no_annotation(),
+                RawResourceTemplate {
+                    uri_template: "mentedb://cognitive/state".to_string(),
+                    name: "cognitive_state".to_string(),
+                    title: None,
+                    description: Some(
+                        "Cognitive state: pain signals, phantom memories, trajectory predictions"
+                            .to_string(),
+                    ),
                     mime_type: Some("application/json".to_string()),
                     icons: None,
                 }

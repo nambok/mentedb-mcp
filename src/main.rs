@@ -22,6 +22,18 @@ struct Cli {
     /// Embedding dimension
     #[arg(long, default_value = "128")]
     embedding_dim: usize,
+
+    /// Default LLM provider for extraction: openai, anthropic, ollama, or mock
+    #[arg(long, default_value = "mock")]
+    llm_provider: String,
+
+    /// API key for the LLM provider (overrides MENTEDB_LLM_API_KEY env var)
+    #[arg(long, env = "MENTEDB_LLM_API_KEY")]
+    llm_api_key: Option<String>,
+
+    /// Model name override for the LLM provider
+    #[arg(long)]
+    llm_model: Option<String>,
 }
 
 #[tokio::main]
@@ -63,10 +75,17 @@ async fn main() -> anyhow::Result<()> {
         data_dir = %data_dir.display(),
         log_file = %log_path.display(),
         embedding_dim = cli.embedding_dim,
+        llm_provider = %cli.llm_provider,
         "mentedb-mcp starting"
     );
 
-    let config = ServerConfig::new(data_dir, cli.embedding_dim);
+    let config = ServerConfig::new(
+        data_dir,
+        cli.embedding_dim,
+        cli.llm_provider,
+        cli.llm_api_key,
+        cli.llm_model,
+    );
 
     server::run(config).await
 }

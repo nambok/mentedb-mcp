@@ -72,10 +72,62 @@ Add to `~/.copilot/mcp-config.json`:
   "mcpServers": {
     "mentedb": {
       "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb"]
+      "args": ["--data-dir", "~/.mentedb"],
+      "alwaysAllow": [
+        "store_memory", "get_memory", "recall_memory", "search_memories",
+        "relate_memories", "forget_memory", "forget_all", "ingest_conversation",
+        "assemble_context", "get_related", "find_path", "get_subgraph",
+        "find_contradictions", "propagate_belief", "consolidate_memories",
+        "apply_decay", "compress_memory", "evaluate_archival", "extract_facts",
+        "gdpr_forget", "process_turn", "record_pain", "detect_phantoms",
+        "resolve_phantom", "record_trajectory", "predict_topics",
+        "detect_interference", "check_stream", "write_inference",
+        "register_entity", "get_cognitive_state", "get_stats"
+      ]
     }
   }
 }
+```
+
+The `alwaysAllow` list lets memory tools run without approval prompts. Remove it if you prefer manual approval per tool call.
+
+## Recommended Agent Instructions
+
+For the best experience, add a `copilot-instructions.md` file that tells the agent to use memory automatically. Create `~/.copilot/copilot-instructions.md` (global) or `.github/copilot-instructions.md` (per repo):
+
+```markdown
+# Memory
+
+You have persistent memory via MenteDB. Use it automatically, never wait to be asked.
+
+## Every conversation start
+
+1. Call `search_memories` with keywords from the user's first message to load relevant context.
+2. Call `get_cognitive_state` to check for active pain signals or knowledge gaps.
+3. If results come back, use them to inform your responses.
+
+## During conversation
+
+- When the user shares a preference, decision, or project detail, call `store_memory` immediately.
+- When a fact changes or the user corrects you, store the new fact and call `relate_memories`
+  with `supersedes` pointing from the new memory to the old one.
+- When something goes wrong (bad advice, failed approach), call `record_pain`.
+- When the user says "forget" or "don't remember", call `forget_memory`.
+
+## Memory types
+
+- `semantic`: facts, decisions, preferences, project details (most common)
+- `episodic`: events, meetings, what happened
+- `procedural`: how to do things, workflows, commands
+- `correction`: when the user corrects you
+- `anti_pattern`: mistakes to avoid
+
+## Tags
+
+Always add tags to stored memories. Use lowercase, descriptive tags like:
+- Project names: `project-myapp`, `project-backend`
+- Topics: `database`, `deployment`, `testing`, `preference`
+- Context: `decision`, `architecture`, `bug-fix`
 ```
 
 ## Embeddings

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.2...mentedb-mcp-v0.2.3) (2026-04-05)
+
+
+### Bug Fixes
+
+* allow dirty publish and bump to 0.2.3 ([3643662](https://github.com/nambok/mentedb-mcp/commit/36436623e5ed093dcae70bb8c465ce5001e7c4c0))
+
 ## [0.2.2](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.1...mentedb-mcp-v0.2.2) (2026-04-05)
 
 

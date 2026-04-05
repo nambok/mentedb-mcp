@@ -36,6 +36,7 @@ cargo run -- --help             # Show CLI help
 - No emojis in code, comments, or documentation
 - No dashes (em/en dash) in prose, use commas instead
 - Conventional commits: `feat:`, `fix:`, `chore:`, single line, no emojis
+- NEVER include Co-authored-by or Authored-by trailers in commits
 - All clippy warnings treated as errors
 - Git config: user.name "Nam Rodriguez", user.email "nambok@gmail.com"
 - Edition 2024

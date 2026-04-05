@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.1...mentedb-mcp-v0.2.2) (2026-04-05)
+
+
+### Features
+
+* switch to crates.io deps and add release workflow ([b5e4855](https://github.com/nambok/mentedb-mcp/commit/b5e485580a274ff39fce6b08b2812b7e68fd7494))
+
 ## [0.2.1](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.0...mentedb-mcp-v0.2.1) (2026-04-05)
 
 

@@ -1703,6 +1703,94 @@ impl MenteDbServer {
         let predictions = tracker.predict_next_topics();
         drop(tracker);
 
+        // ── Auto-maintenance (staggered) ──
+        let mut maintenance: Vec<&str> = Vec::new();
+        let turn = req.turn_id;
+
+        // Every 50 turns: apply salience decay
+        if turn > 0 && turn % 50 == 0 {
+            let half_life_us = (168.0 * 3600.0 * 1_000_000.0) as u64; // 7 days
+            let config = DecayConfig {
+                half_life_us,
+                ..DecayConfig::default()
+            };
+            let decay_engine = DecayEngine::new(config);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64;
+            let mut db = self.db.lock().await;
+            let all = recall_all_memories(&mut db);
+            let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+            decay_engine.apply_decay_batch(&mut memories, now);
+            drop(db);
+            maintenance.push("apply_decay");
+            tracing::info!(turn_id = turn, "auto-maintenance: applied salience decay");
+        }
+
+        // Every 100 turns: evaluate archival and delete stale memories
+        if turn > 0 && turn % 100 == 0 {
+            let config = ArchivalConfig {
+                max_salience: 0.1,
+                min_age_us: 7 * 24 * 3600 * 1_000_000,
+                ..ArchivalConfig::default()
+            };
+            let pipeline = ArchivalPipeline::new(config);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64;
+            let mut db = self.db.lock().await;
+            let all = recall_all_memories(&mut db);
+            let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+            let decisions = pipeline.evaluate_batch(&memories, now);
+            let mut archived = 0u64;
+            for (id, decision) in &decisions {
+                if matches!(
+                    decision,
+                    ArchivalDecision::Delete | ArchivalDecision::Archive
+                ) {
+                    let _ = db.forget(*id);
+                    archived += 1;
+                }
+            }
+            drop(db);
+            maintenance.push("evaluate_archival");
+            tracing::info!(
+                turn_id = turn,
+                archived,
+                "auto-maintenance: evaluated archival"
+            );
+        }
+
+        // Every 200 turns: consolidate similar memories
+        if turn > 0 && turn % 200 == 0 {
+            let mut db = self.db.lock().await;
+            let all = recall_all_memories(&mut db);
+            let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+            drop(db);
+            if memories.len() >= 2 {
+                let consolidation_engine = ConsolidationEngine::new();
+                let candidates = consolidation_engine.find_candidates(&memories, 2, 0.85);
+                for candidate in &candidates {
+                    let cluster_memories: Vec<&MemoryNode> = candidate
+                        .memories
+                        .iter()
+                        .filter_map(|id| memories.iter().find(|m| m.id == *id))
+                        .collect();
+                    let cluster_owned: Vec<MemoryNode> =
+                        cluster_memories.into_iter().cloned().collect();
+                    let _ = consolidation_engine.consolidate(&cluster_owned);
+                }
+                maintenance.push("consolidate_memories");
+                tracing::info!(
+                    turn_id = turn,
+                    clusters = candidates.len(),
+                    "auto-maintenance: consolidated memories"
+                );
+            }
+        }
+
         let elapsed_ms = start.elapsed().as_millis();
 
         tracing::info!(
@@ -1724,6 +1812,7 @@ impl MenteDbServer {
                 "inference_results": inference_results,
                 "pain_warnings": pain_warnings,
                 "predicted_topics": predictions,
+                "maintenance": maintenance,
                 "elapsed_ms": elapsed_ms,
             })
             .to_string(),

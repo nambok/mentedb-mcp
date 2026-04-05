@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.7...mentedb-mcp-v0.2.8) (2026-04-05)
+
+
+### Features
+
+* graceful shutdown with db.close() flush ([c4a8d2e](https://github.com/nambok/mentedb-mcp/commit/c4a8d2ecb775a482d0e8d98bb589e6398a456f71))
+
 ## [0.2.7](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.6...mentedb-mcp-v0.2.7) (2026-04-05)
 
 

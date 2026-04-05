@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.11](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.10...mentedb-mcp-v0.2.11) (2026-04-05)
+
+
+### Bug Fixes
+
+* cargo fmt ([9c6e2da](https://github.com/nambok/mentedb-mcp/commit/9c6e2daee2090a3552d169ac24c655408716cafe))
+* write_inference applies actions to DB, extract_facts stores edges, search/assemble use per-ID lookups ([8572bdf](https://github.com/nambok/mentedb-mcp/commit/8572bdf291a519ff15e2c72a8aa14489e7f0ae31))
+
 ## [0.2.10](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.9...mentedb-mcp-v0.2.10) (2026-04-05)
 
 

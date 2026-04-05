@@ -1005,8 +1005,8 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "mentedb"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "mentedb-context",
  "mentedb-core",
@@ -1021,8 +1021,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "crossbeam",
@@ -1034,9 +1034,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mentedb-consolidation"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
+dependencies = [
+ "ahash",
+ "mentedb-core",
+ "serde",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mentedb-context"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1048,8 +1060,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1064,8 +1076,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1077,8 +1089,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-core",
@@ -1094,8 +1106,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1109,8 +1121,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1132,10 +1144,12 @@ dependencies = [
  "clap",
  "mentedb",
  "mentedb-cognitive",
+ "mentedb-consolidation",
  "mentedb-context",
  "mentedb-core",
  "mentedb-embedding",
  "mentedb-extraction",
+ "mentedb-graph",
  "rmcp",
  "schemars",
  "serde",
@@ -1149,8 +1163,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1161,8 +1175,8 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.1.1"
-source = "git+https://github.com/nambok/mentedb?branch=main#491be3b2b615c1f284a8819743ac2792f00dadcd"
+version = "0.2.1"
+source = "git+https://github.com/nambok/mentedb?branch=main#56020ec7994df7108bbbb1f8ffdc671757f96712"
 dependencies = [
  "ahash",
  "bytes",

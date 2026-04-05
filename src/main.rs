@@ -158,7 +158,15 @@ You have persistent memory via MenteDB. Use it automatically, never wait to be a
 Call `process_turn` on EVERY conversation turn. This is the core memory loop:
 - Pass the user's message and your response
 - Increment `turn_id` each turn (start at 0)
-- It automatically: searches relevant context, stores the conversation as searchable episodic memory, runs pain/contradiction checks, and returns context + warnings
+- It automatically:
+  - Searches for relevant past context via semantic similarity
+  - Stores the conversation as searchable episodic memory
+  - Runs write-time inference (contradiction detection, edge creation, confidence updates)
+  - Extracts structured facts (subject-predicate-object)
+  - Detects phantom entities (things referenced but not in memory)
+  - Checks your response against known facts for contradictions
+  - Tracks conversation trajectory and predicts next topics
+  - Runs periodic maintenance (decay every 50 turns, archival every 100, consolidation every 200)
 
 On the FIRST turn, also call `get_cognitive_state` to check for active pain signals or knowledge gaps.
 
@@ -179,6 +187,7 @@ Don't store noise or chitchat. Store facts, preferences, decisions, and correcti
 - `record_pain`: When something goes wrong (bad advice, failed approach) so you can warn about it in the future.
 - `relate_memories`: When a fact changes, store the new fact and relate with `supersedes` pointing from new to old.
 - `forget_memory`: When the user says "forget" or "don't remember".
+- `register_entity`: Register important entities (people, tools, projects) so phantom detection can flag them.
 
 ## Memory types
 

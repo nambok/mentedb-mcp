@@ -15,14 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io"] }
-mentedb = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-core = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-graph = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-cognitive = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-context = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-embedding = { git = "https://github.com/nambok/mentedb", branch = "main", features = ["local"] }
-mentedb-extraction = { git = "https://github.com/nambok/mentedb", branch = "main" }
-mentedb-consolidation = { git = "https://github.com/nambok/mentedb", branch = "main" }
+mentedb = "0.2"
+mentedb-core = "0.2"
+mentedb-graph = "0.2"
+mentedb-cognitive = "0.2"
+mentedb-context = "0.2"
+mentedb-embedding = { version = "0.2", features = ["local"] }
+mentedb-extraction = "0.2"
+mentedb-consolidation = "0.2"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

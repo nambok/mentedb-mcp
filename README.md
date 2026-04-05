@@ -14,7 +14,7 @@ Install from crates.io:
 
 ```bash
 # Requires Rust: https://rustup.rs
-cargo install --git https://github.com/nambok/mentedb-mcp
+cargo install mentedb-mcp
 ```
 
 Then run the auto-setup for your client:

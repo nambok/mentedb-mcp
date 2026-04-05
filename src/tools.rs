@@ -2043,6 +2043,7 @@ impl MenteDbServer {
         )]))
     }
 }
+#[rmcp::tool_handler]
 impl ServerHandler for MenteDbServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
@@ -2056,26 +2057,51 @@ impl ServerHandler for MenteDbServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "MenteDB MCP server provides AI agent memory backed by a cognition aware database.\n\
+            "MenteDB is your persistent memory. Use it proactively, not just when asked.\n\
              \n\
-             Core tools: store_memory, recall_memory, get_memory, search_memories, \
-             relate_memories, forget_memory, ingest_conversation.\n\
+             WHEN TO STORE:\n\
+             - After learning a user preference, decision, or project detail, call store_memory.\n\
+             - Use memory_type 'semantic' for facts, 'episodic' for events, 'procedural' for how-to \
+             knowledge, 'correction' when the user corrects you, 'anti_pattern' for mistakes to avoid.\n\
+             - Add descriptive tags (e.g. ['project-x', 'database', 'decision']) for better retrieval.\n\
+             - Include relevant metadata as key-value pairs for structured data.\n\
              \n\
-             Context assembly: assemble_context with real token budgets and format control.\n\
+             WHEN TO SEARCH:\n\
+             - At the start of a conversation or task, call search_memories with relevant keywords \
+             to load context from prior sessions.\n\
+             - Before answering questions about past decisions, preferences, or project details.\n\
+             - When the user references something you discussed before.\n\
              \n\
-             Knowledge graph: get_related, find_path, get_subgraph, find_contradictions, \
-             propagate_belief.\n\
+             WHEN TO RELATE:\n\
+             - When a fact changes, store the new fact and call relate_memories with edge_type \
+             'supersedes' from the new memory to the old one.\n\
+             - Use 'contradicts' when two memories conflict.\n\
+             - Use 'supports' when one memory reinforces another.\n\
+             - Use 'caused' or 'before' for causal or temporal chains.\n\
+             - Use 'part_of' for hierarchical relationships.\n\
              \n\
-             Consolidation: consolidate_memories, apply_decay, compress_memory, \
-             evaluate_archival, extract_facts, gdpr_forget.\n\
+             WHEN TO FORGET:\n\
+             - When the user explicitly asks you to forget something.\n\
+             - When information is confirmed wrong, call forget_memory with a reason.\n\
              \n\
-             Cognitive systems: record_pain (pain signals), detect_phantoms / resolve_phantom \
-             (knowledge gaps), record_trajectory / predict_topics (trajectory tracking), \
-             detect_interference, check_stream (LLM output monitoring), write_inference \
-             (write time contradiction and edge detection), register_entity, get_cognitive_state.\n\
+             COGNITIVE FEATURES (use when appropriate):\n\
+             - record_pain: When something went wrong (bad advice, failed approach), record it so you \
+             can warn about similar situations in the future.\n\
+             - record_trajectory + predict_topics: Track conversation flow to anticipate what the user \
+             needs next.\n\
+             - write_inference: After storing important memories, run this to auto-detect contradictions \
+             and suggest edges.\n\
+             - detect_phantoms: When processing text that references unknown entities, scan for \
+             knowledge gaps.\n\
+             - assemble_context: When you need to build a focused context window from many memories, \
+             specify a query and token budget.\n\
              \n\
-             Extraction: ingest_conversation extracts structured memories from raw conversation \
-             text via LLM (openai, anthropic, ollama, or mock).",
+             MAINTENANCE (run periodically or when asked):\n\
+             - consolidate_memories: Merge similar memories to reduce clutter.\n\
+             - apply_decay: Age out stale memories by reducing salience.\n\
+             - evaluate_archival: Review memories for cleanup.\n\
+             - get_cognitive_state: Check for active pain signals, knowledge gaps, and predictions.\n\
+             - get_stats: Quick overview of database size and health.",
         )
     }
 

@@ -402,7 +402,8 @@ fn test_process_turn() {
     );
 
     assert!(result["turn_id"].as_u64().unwrap() == 1);
-    assert!(result["relevant_context"].is_array());
+    assert!(result["context"].is_object());
+    assert!(result["context"]["memories"].is_array());
     assert!(result["memories_stored"].is_array());
     assert!(result["pain_warnings"].is_array());
     assert!(result["predicted_topics"].is_array());

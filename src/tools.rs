@@ -1197,6 +1197,22 @@ impl MenteDbServer {
             let cluster_owned: Vec<MemoryNode> = cluster_memories.into_iter().cloned().collect();
             let consolidated = engine.consolidate(&cluster_owned);
 
+            // Store merged memory and remove sources
+            let agent_id = cluster_owned
+                .first()
+                .map(|m| m.agent_id)
+                .unwrap_or(AgentId(Uuid::nil()));
+            let merged = MemoryNode::new(
+                agent_id,
+                consolidated.new_type.clone(),
+                consolidated.summary.clone(),
+                consolidated.combined_embedding.clone(),
+            );
+            let _ = db.store(merged);
+            for source_id in &consolidated.source_memories {
+                let _ = db.forget(*source_id);
+            }
+
             consolidated_results.push(json!({
                 "topic": candidate.topic,
                 "avg_similarity": candidate.avg_similarity,
@@ -1252,6 +1268,11 @@ impl MenteDbServer {
 
         engine.apply_decay_batch(&mut memories, now);
 
+        // Persist updated salience values
+        for mem in &memories {
+            let _ = db.store(mem.clone());
+        }
+
         let archival_threshold = 0.1;
         let below_threshold = memories
             .iter()
@@ -1295,6 +1316,11 @@ impl MenteDbServer {
                 let compressor = MemoryCompressor::new();
                 let compressed = compressor.compress(&sm.memory);
                 let original_length = sm.memory.content.len();
+
+                // Persist compressed content
+                let mut updated = sm.memory.clone();
+                updated.content = compressed.compressed_content.clone();
+                let _ = db.store(updated);
 
                 tracing::info!(
                     id = %id,
@@ -1359,8 +1385,14 @@ impl MenteDbServer {
             let id_str = id.to_string();
             match decision {
                 ArchivalDecision::Keep => keep.push(id_str),
-                ArchivalDecision::Archive => archive.push(id_str),
-                ArchivalDecision::Delete => delete.push(id_str),
+                ArchivalDecision::Archive | ArchivalDecision::Delete => {
+                    let _ = db.forget(*id);
+                    if matches!(decision, ArchivalDecision::Delete) {
+                        delete.push(id_str);
+                    } else {
+                        archive.push(id_str);
+                    }
+                }
                 ArchivalDecision::Consolidate(ids) => {
                     consolidate.push(json!({
                         "id": id_str,
@@ -1723,6 +1755,10 @@ impl MenteDbServer {
             let all = recall_all_memories(&mut db);
             let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             decay_engine.apply_decay_batch(&mut memories, now);
+            // Persist updated salience values
+            for mem in &memories {
+                let _ = db.store(mem.clone());
+            }
             drop(db);
             maintenance.push("apply_decay");
             tracing::info!(turn_id = turn, "auto-maintenance: applied salience decay");
@@ -1768,7 +1804,6 @@ impl MenteDbServer {
             let mut db = self.db.lock().await;
             let all = recall_all_memories(&mut db);
             let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-            drop(db);
             if memories.len() >= 2 {
                 let consolidation_engine = ConsolidationEngine::new();
                 let candidates = consolidation_engine.find_candidates(&memories, 2, 0.85);
@@ -1780,7 +1815,23 @@ impl MenteDbServer {
                         .collect();
                     let cluster_owned: Vec<MemoryNode> =
                         cluster_memories.into_iter().cloned().collect();
-                    let _ = consolidation_engine.consolidate(&cluster_owned);
+                    let consolidated = consolidation_engine.consolidate(&cluster_owned);
+                    // Store the merged memory
+                    let agent_id = cluster_owned
+                        .first()
+                        .map(|m| m.agent_id)
+                        .unwrap_or(AgentId(Uuid::nil()));
+                    let merged = MemoryNode::new(
+                        agent_id,
+                        consolidated.new_type,
+                        consolidated.summary,
+                        consolidated.combined_embedding,
+                    );
+                    let _ = db.store(merged);
+                    // Remove source memories
+                    for source_id in &consolidated.source_memories {
+                        let _ = db.forget(*source_id);
+                    }
                 }
                 maintenance.push("consolidate_memories");
                 tracing::info!(
@@ -1789,6 +1840,7 @@ impl MenteDbServer {
                     "auto-maintenance: consolidated memories"
                 );
             }
+            drop(db);
         }
 
         let elapsed_ms = start.elapsed().as_millis();
@@ -2447,6 +2499,17 @@ impl MenteDbServer {
                 })
             })
             .collect();
+        drop(db);
+
+        // Persist updated confidence values
+        let mut db = self.db.lock().await;
+        for (mid, conf) in &affected {
+            if let Ok(Some(sm)) = find_memory_by_id(&mut db, mid.0) {
+                let mut updated = sm.memory.clone();
+                updated.confidence = *conf;
+                let _ = db.store(updated);
+            }
+        }
 
         tracing::info!(
             id = %id,

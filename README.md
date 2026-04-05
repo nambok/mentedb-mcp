@@ -222,6 +222,7 @@ Options:
 |----------|-------------|
 | `MENTEDB_LLM_API_KEY` | Default API key for LLM extraction (also read by `--llm-api-key`) |
 | `OPENAI_API_KEY` | Fallback API key when using the OpenAI provider |
+| `ANTHROPIC_API_KEY` | Fallback API key when using the Anthropic provider |
 | `RUST_LOG` | Logging filter, e.g. `RUST_LOG=mentedb_mcp=debug` |
 
 The server writes logs to both stderr (for MCP clients) and a rolling file at `<data-dir>/mentedb-mcp.log`.
@@ -240,6 +241,10 @@ MCP resources provide read only access to server state.
 ## Architecture
 
 The server runs on stdio transport using the rmcp framework. It is backed by the MenteDB engine, which is composed of 13 Rust crates covering storage, indexing, graph, context assembly, consolidation, cognitive systems, embedding, and extraction. Cognitive subsystems (pain registry, phantom tracker, trajectory tracker) are initialized at startup and maintained in memory for the lifetime of the server process.
+
+## Issues
+
+Found a bug or have a feature request? [Open an issue](https://github.com/nambok/mentedb-mcp/issues).
 
 ## License
 

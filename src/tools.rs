@@ -2010,19 +2010,26 @@ impl MenteDbServer {
             .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
             .collect();
 
-        Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "ok": true,
-                "context": context_summaries,
-                "stored": stored_ids.len(),
-                "inference_applied": inference_applied,
-                "pain_warnings": pain_warnings,
-                "contradictions": contradiction_count,
-                "phantoms": phantom_count,
-                "predictions": predictions,
-            })
-            .to_string(),
-        )]))
+        let response = json!({
+            "ok": true,
+            "context": context_summaries,
+            "stored": stored_ids.len(),
+            "inference_applied": inference_applied,
+            "pain_warnings": pain_warnings,
+            "contradictions": contradiction_count,
+            "phantoms": phantom_count,
+            "predictions": predictions,
+        })
+        .to_string();
+
+        tracing::info!(
+            turn_id = req.turn_id,
+            response_bytes = response.len(),
+            context_entries = context_summaries.len(),
+            "process_turn response"
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(response)]))
     }
 
     // -- Cognitive tools --

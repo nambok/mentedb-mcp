@@ -170,6 +170,17 @@ Call `process_turn` on EVERY conversation turn. This is the core memory loop:
 
 On the FIRST turn, also call `get_cognitive_state` to check for active pain signals or knowledge gaps.
 
+## USE the returned context (MANDATORY)
+
+When `process_turn` returns, READ the response and USE it:
+- **context**: These are relevant memories from past conversations. Reference them in your response when relevant. If the user asks something you've discussed before, use this context instead of asking again.
+- **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before. Mention what went wrong.
+- **contradictions**: If > 0, flag the inconsistency to the user.
+- **predictions**: Use these to anticipate what the user might ask next.
+- **phantoms**: These are knowledge gaps — entities mentioned but not in memory. Consider asking about them or registering them.
+
+This is what makes memory USEFUL. Storing without retrieving is pointless.
+
 ## Store important facts yourself (MANDATORY)
 
 YOU are the extraction engine. When you notice important information in the conversation, call `store_memory` immediately:
@@ -183,7 +194,7 @@ Don't store noise or chitchat. Store facts, preferences, decisions, and correcti
 
 ## When to use other tools
 
-- `search_memories`: When you need to look up something specific outside of `process_turn`.
+- `search_memories`: When you need to look up something specific outside of `process_turn`. Use this proactively — if the user mentions a project or topic, search for what you know about it.
 - `record_pain`: When something goes wrong (bad advice, failed approach) so you can warn about it in the future.
 - `relate_memories`: When a fact changes, store the new fact and relate with `supersedes` pointing from new to old.
 - `forget_memory`: When the user says "forget" or "don't remember".

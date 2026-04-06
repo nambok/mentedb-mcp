@@ -2004,10 +2004,21 @@ impl MenteDbServer {
             "process_turn complete"
         );
 
-        // Build compact context: content strings for the LLM
-        let context_summaries: Vec<&str> = context_items
+        // Build compact context: truncated content + IDs for the LLM
+        // Full content stays in storage; agent can recall_memory(id) if needed
+        const CTX_MAX_CHARS: usize = 300;
+        let context_summaries: Vec<serde_json::Value> = context_items
             .iter()
-            .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
+            .filter_map(|ci| {
+                let content = ci.get("content").and_then(|c| c.as_str())?;
+                let id = ci.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                let truncated = if content.len() > CTX_MAX_CHARS {
+                    format!("{}…", &content[..content.floor_char_boundary(CTX_MAX_CHARS)])
+                } else {
+                    content.to_string()
+                };
+                Some(json!({ "id": id, "summary": truncated }))
+            })
             .collect();
 
         let response = json!({

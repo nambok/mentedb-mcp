@@ -47,6 +47,12 @@ enum Commands {
         #[arg(value_enum, default_value = "copilot")]
         client: SetupClient,
     },
+    /// Update agent instructions for your MCP client (same as setup, but clearer intent)
+    Update {
+        /// Target client
+        #[arg(value_enum, default_value = "copilot")]
+        client: SetupClient,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -60,8 +66,10 @@ enum SetupClient {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if let Some(Commands::Setup { client }) = cli.command {
-        return run_setup(client);
+    match cli.command {
+        Some(Commands::Setup { client }) => return run_setup(client),
+        Some(Commands::Update { client }) => return run_setup(client),
+        None => {}
     }
 
     let data_dir = ServerConfig::resolve_data_dir(&cli.data_dir);

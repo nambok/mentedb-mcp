@@ -2774,7 +2774,7 @@ impl ServerHandler for MenteDbServer {
              and tracks the conversation trajectory.\n\
              \n\
              REQUIRED: USE THE RETURNED CONTEXT\n\
-             - context: Past memories relevant to this turn. USE them in your response — don't re-ask things you already know.\n\
+             - context: Past memories as truncated summaries with IDs. USE them in your response. Call recall_memory(id) for full content. Don't re-ask things you already know.\n\
              - pain_warnings: If non-empty, WARN the user — a similar situation went wrong before.\n\
              - contradictions: If > 0, flag the inconsistency.\n\
              - predictions: Anticipate what the user might ask next.\n\

@@ -213,7 +213,7 @@ On the FIRST turn, also call `get_cognitive_state` to check for active pain sign
 ## USE the returned context (MANDATORY)
 
 When `process_turn` returns, READ the response and USE it:
-- **context**: These are relevant memories from past conversations. Reference them in your response when relevant. If the user asks something you've discussed before, use this context instead of asking again.
+- **context**: These are relevant memories from past conversations, shown as truncated summaries with IDs. Reference them in your response when relevant. If you need the full content, call `recall_memory(id)`. If the user asks something you've discussed before, use this context instead of asking again.
 - **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before. Mention what went wrong.
 - **contradictions**: If > 0, flag the inconsistency to the user.
 - **predictions**: Use these to anticipate what the user might ask next.

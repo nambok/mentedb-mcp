@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.14](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.13...mentedb-mcp-v0.2.14) (2026-04-06)
+
+
+### Bug Fixes
+
+* add response size logging to process_turn for debugging server errors ([3d8068f](https://github.com/nambok/mentedb-mcp/commit/3d8068fc2b3621aa792c51e4189e1a9210dcfc85))
+* truncate process_turn context to prevent upstream API overflow ([e42894c](https://github.com/nambok/mentedb-mcp/commit/e42894c3c32757a40f66104ebed3748f73d68964))
+
 ## [0.2.13](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.12...mentedb-mcp-v0.2.13) (2026-04-06)
 
 

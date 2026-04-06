@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.12](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.11...mentedb-mcp-v0.2.12) (2026-04-06)
+
+
+### Features
+
+* add update command as alias for setup ([a6970ec](https://github.com/nambok/mentedb-mcp/commit/a6970ec3e66d4afc478b8e23ccaf7efb659c1a8d))
+* auto-update agent instructions on server startup, use stderr for all output ([93a4e7c](https://github.com/nambok/mentedb-mcp/commit/93a4e7c73e16871a55623519dac39a8d1af61ba8))
+
+
+### Bug Fixes
+
+* add USE returned context instructions so agent acts on memories, pain warnings, contradictions ([36915b1](https://github.com/nambok/mentedb-mcp/commit/36915b1368e6882afb3a7c3137ad1c6e051b2367))
+* revert context truncation, keep full memory content for accuracy ([7df6304](https://github.com/nambok/mentedb-mcp/commit/7df6304cae83fa46d3705514168c5ef9a83cc9af))
+* truncate context strings to 500 chars to reduce LLM token pressure ([469961c](https://github.com/nambok/mentedb-mcp/commit/469961c03ef2ee65fcb9b80ac24f0f2bfa7db9af))
+
 ## [0.2.11](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.10...mentedb-mcp-v0.2.11) (2026-04-05)
 
 

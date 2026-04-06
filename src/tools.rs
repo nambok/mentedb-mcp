@@ -2751,9 +2751,13 @@ impl ServerHandler for MenteDbServer {
              - It handles everything: searches relevant context, stores episodic memory, \
              runs write-time inference, extracts and links facts, detects phantoms, checks for contradictions, \
              and tracks the conversation trajectory.\n\
-             - Returns relevant_context (prior memories), stored memory IDs, inference results, \
-             contradictions, phantoms, and predicted next topics.\n\
-             - Use project_context to soft-tag memories with the current project/workspace.\n\
+             \n\
+             REQUIRED: USE THE RETURNED CONTEXT\n\
+             - context: Past memories relevant to this turn. USE them in your response — don't re-ask things you already know.\n\
+             - pain_warnings: If non-empty, WARN the user — a similar situation went wrong before.\n\
+             - contradictions: If > 0, flag the inconsistency.\n\
+             - predictions: Anticipate what the user might ask next.\n\
+             - phantoms: Knowledge gaps — consider asking about or registering these entities.\n\
              \n\
              ALSO REQUIRED: CALL store_memory FOR IMPORTANT FACTS\n\
              - You are the extraction engine. When you notice preferences, decisions, corrections, \
@@ -2762,8 +2766,8 @@ impl ServerHandler for MenteDbServer {
              knowledge, 'correction' when the user corrects you, 'anti_pattern' for mistakes to avoid.\n\
              - Add descriptive tags (e.g. ['project-x', 'database', 'decision']) for better retrieval.\n\
              \n\
-             OTHER TOOLS (use when appropriate):\n\
-             - search_memories: Look up specific past context outside of process_turn.\n\
+             OTHER TOOLS (use proactively):\n\
+             - search_memories: Proactively look up what you know about a topic or project the user mentions.\n\
              - relate_memories: Link memories with edges (supersedes, contradicts, supports, caused, part_of).\n\
              - forget_memory / forget_all: When user asks to forget something.\n\
              - record_pain: When something went wrong, record it for future warnings.\n\

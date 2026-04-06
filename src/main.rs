@@ -144,7 +144,7 @@ fn auto_update_instructions() {
     for path_str in &instruction_paths {
         let path = std::path::Path::new(path_str);
         if path.exists() {
-            match append_instructions(path) {
+            match append_instructions(path, false) {
                 Ok(()) => {}
                 Err(e) => {
                     tracing::warn!(path = %path.display(), error = %e, "auto-update instructions failed");
@@ -326,7 +326,7 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
+fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Result<()> {
     let version_marker = format!(
         "<!-- mentedb-instructions-v{} -->",
         env!("CARGO_PKG_VERSION")
@@ -341,18 +341,45 @@ fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
             );
             return Ok(());
         }
+
+        // Extract old version for display
+        let old_version = content
+            .lines()
+            .find(|l| l.contains("<!-- mentedb-instructions-v"))
+            .and_then(|l| {
+                l.trim()
+                    .strip_prefix("<!-- mentedb-instructions-v")
+                    .and_then(|s| s.strip_suffix(" -->"))
+            })
+            .unwrap_or("unknown");
+
+        if interactive {
+            eprintln!(
+                "\n  Agent instructions changed: v{} → v{}",
+                old_version,
+                env!("CARGO_PKG_VERSION")
+            );
+            eprintln!("  File: {}", path.display());
+            eprint!("  Update? [Y/n] ");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim().to_lowercase();
+            if input == "n" || input == "no" {
+                eprintln!("  [skip] user declined update");
+                return Ok(());
+            }
+        }
+
         // Remove old MenteDB instructions block if present
         let cleaned = if content.contains("# Memory\n\nYou have persistent memory via MenteDB") {
             let start = content
                 .find("# Memory\n\nYou have persistent memory via MenteDB")
                 .unwrap();
-            // Find the end — look for next top-level heading or end of file
             let rest = &content[start..];
             let end = rest
                 .find("\n# ")
                 .map(|i| start + i)
                 .unwrap_or(content.len());
-            // Also remove any old version marker
             let prefix = content[..start].trim_end().to_string();
             let suffix = content[end..].to_string();
             format!("{prefix}\n{suffix}")
@@ -381,7 +408,7 @@ fn setup_copilot(home: &str, binary: &str) -> anyhow::Result<()> {
 
     let copilot_dir = std::path::PathBuf::from(home).join(".copilot");
     merge_mcp_config(&copilot_dir.join("mcp-config.json"), binary)?;
-    append_instructions(&copilot_dir.join("copilot-instructions.md"))?;
+    append_instructions(&copilot_dir.join("copilot-instructions.md"), true)?;
 
     println!("\nDone! Restart Copilot CLI to activate MenteDB memory.");
     Ok(())
@@ -403,7 +430,7 @@ fn setup_cursor(home: &str, binary: &str) -> anyhow::Result<()> {
 
     let cursor_dir = std::path::PathBuf::from(home).join(".cursor");
     merge_mcp_config(&cursor_dir.join("mcp.json"), binary)?;
-    append_instructions(&cursor_dir.join("rules/mentedb.md"))?;
+    append_instructions(&cursor_dir.join("rules/mentedb.md"), true)?;
 
     println!("\nDone! Restart Cursor to activate MenteDB memory.");
     Ok(())

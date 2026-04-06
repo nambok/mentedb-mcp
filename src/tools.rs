@@ -61,7 +61,9 @@ pub struct RecallMemoryRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchMemoriesRequest {
-    #[schemars(description = "The search query text")]
+    #[schemars(
+        description = "Search query text for semantic search, OR a memory UUID to get full content by ID"
+    )]
     pub query: String,
     #[schemars(description = "Maximum number of results to return (default: 10)")]
     pub limit: Option<usize>,
@@ -377,6 +379,35 @@ impl MenteDbServer {
                 Arc::new(HashEmbeddingProvider::new(config.embedding_dim))
             }
         };
+        let full_tools = config.full_tools;
+        let mut tool_router = Self::tool_router();
+
+        // In default mode, only expose essential tools for better agent compliance.
+        // All internal tools still run server-side via process_turn.
+        if !full_tools {
+            let essential = [
+                "process_turn",
+                "store_memory",
+                "search_memories",
+                "forget_memory",
+            ];
+            let all_names: Vec<String> = tool_router
+                .list_all()
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect();
+            for name in &all_names {
+                if !essential.contains(&name.as_str()) {
+                    tool_router.remove_route(name);
+                }
+            }
+            tracing::info!(
+                exposed = essential.len(),
+                hidden = all_names.len() - essential.len(),
+                "Slim tool mode: exposing only essential tools"
+            );
+        }
+
         Self {
             db: Arc::new(Mutex::new(db)),
             embedding_provider,
@@ -385,7 +416,7 @@ impl MenteDbServer {
             trajectory_tracker: Arc::new(Mutex::new(TrajectoryTracker::new(100))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             config,
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
@@ -551,7 +582,7 @@ fn store_extraction_results(
 #[rmcp::tool_router]
 impl MenteDbServer {
     #[rmcp::tool(
-        description = "Store a new memory in MenteDB. Returns the unique ID of the stored memory."
+        description = "Store an important fact, preference, decision, or correction. Use types: semantic (facts), procedural (how-to), correction (fixes), anti_pattern (mistakes to avoid). Add tags for retrieval."
     )]
     async fn store_memory(
         &self,
@@ -647,12 +678,32 @@ impl MenteDbServer {
     }
 
     #[rmcp::tool(
-        description = "Search memories by semantic similarity. Returns matching memories ranked by relevance score."
+        description = "Search memories by semantic similarity, or get full content of a specific memory by UUID. Use when you need to look up what you know about a topic, or to get the full text of a truncated context entry."
     )]
     async fn search_memories(
         &self,
         Parameters(req): Parameters<SearchMemoriesRequest>,
     ) -> Result<CallToolResult, McpError> {
+        // If the query looks like a UUID, do a direct ID lookup
+        if let Ok(uuid) = Uuid::parse_str(req.query.trim()) {
+            let mut db = self.db.lock().await;
+            if let Ok(Some(mem)) = find_memory_by_id(&mut db, uuid) {
+                return Ok(CallToolResult::success(vec![Content::text(
+                    json!({
+                        "id": uuid.to_string(),
+                        "content": mem.memory.content,
+                        "memory_type": format!("{:?}", mem.memory.memory_type),
+                        "tags": mem.memory.tags,
+                        "salience": mem.memory.salience,
+                        "created_at": mem.memory.created_at,
+                    })
+                    .to_string(),
+                )]));
+            } else {
+                return error_result(&format!("Memory not found: {uuid}"));
+            }
+        }
+
         let k = req.limit.unwrap_or(10);
         let embedding = self
             .embedding_provider
@@ -761,7 +812,9 @@ impl MenteDbServer {
         }
     }
 
-    #[rmcp::tool(description = "Delete a memory from the database.")]
+    #[rmcp::tool(
+        description = "Delete a memory by ID. Use when the user asks to forget something."
+    )]
     async fn forget_memory(
         &self,
         Parameters(req): Parameters<ForgetMemoryRequest>,
@@ -1568,7 +1621,7 @@ impl MenteDbServer {
     // -- Process Turn (automatic memory pipeline) --
 
     #[rmcp::tool(
-        description = "MANDATORY: Call this tool on EVERY conversation turn. This is the core memory loop — without it, nothing is remembered. Searches for relevant context, stores the conversation as episodic memory, runs write-time inference (contradiction detection, edge creation, confidence updates), extracts and links facts, detects phantom entities, checks the response against known facts, tracks trajectory, and runs periodic maintenance. Returns retrieved context, stored memory IDs, inference results, contradictions, phantoms, and predictions."
+        description = "⚠️ REQUIRED — Call BEFORE every response, on EVERY turn. Without this call, nothing is remembered. Returns context from past conversations (use it!), stores the current turn, runs inference, and detects contradictions. Pass user_message and your planned assistant_response."
     )]
     async fn process_turn(
         &self,
@@ -2764,36 +2817,15 @@ impl ServerHandler for MenteDbServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "MenteDB is your persistent memory. You MUST use it on every conversation turn.\n\
+            "MenteDB gives you persistent memory across sessions. You have 4 tools:\n\
              \n\
-             REQUIRED: CALL process_turn ON EVERY TURN\n\
-             - You MUST call process_turn once per conversation turn with user_message and assistant_response.\n\
-             - This is not optional. Without it, nothing is remembered across turns or sessions.\n\
-             - It handles everything: searches relevant context, stores episodic memory, \
-             runs write-time inference, extracts and links facts, detects phantoms, checks for contradictions, \
-             and tracks the conversation trajectory.\n\
+             1. process_turn — ⚠️ CALL ON EVERY TURN. Pass user_message + assistant_response. Returns past context, stores the turn, runs inference.\n\
+             2. store_memory — Save important facts (preferences, decisions, corrections). Add type + tags.\n\
+             3. search_memories — Look up what you know. Pass a query OR a memory UUID for full content.\n\
+             4. forget_memory — Delete a memory when the user asks to forget.\n\
              \n\
-             REQUIRED: USE THE RETURNED CONTEXT\n\
-             - context: Past memories as truncated summaries with IDs. USE them in your response. Call recall_memory(id) for full content. Don't re-ask things you already know.\n\
-             - pain_warnings: If non-empty, WARN the user — a similar situation went wrong before.\n\
-             - contradictions: If > 0, flag the inconsistency.\n\
-             - predictions: Anticipate what the user might ask next.\n\
-             - phantoms: Knowledge gaps — consider asking about or registering these entities.\n\
-             \n\
-             ALSO REQUIRED: CALL store_memory FOR IMPORTANT FACTS\n\
-             - You are the extraction engine. When you notice preferences, decisions, corrections, \
-             or procedures in the conversation, call store_memory immediately.\n\
-             - Use memory_type 'semantic' for facts, 'episodic' for events, 'procedural' for how-to \
-             knowledge, 'correction' when the user corrects you, 'anti_pattern' for mistakes to avoid.\n\
-             - Add descriptive tags (e.g. ['project-x', 'database', 'decision']) for better retrieval.\n\
-             \n\
-             OTHER TOOLS (use proactively):\n\
-             - search_memories: Proactively look up what you know about a topic or project the user mentions.\n\
-             - relate_memories: Link memories with edges (supersedes, contradicts, supports, caused, part_of).\n\
-             - forget_memory / forget_all: When user asks to forget something.\n\
-             - record_pain: When something went wrong, record it for future warnings.\n\
-             - get_cognitive_state: Check for active pain signals and knowledge gaps.\n\
-             - assemble_context: Build a focused context window from many memories with a token budget.",
+             USE THE CONTEXT: process_turn returns truncated summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
+             If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
         )
     }
 

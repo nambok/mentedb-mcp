@@ -37,6 +37,10 @@ struct Cli {
     /// Model name override for the LLM provider
     #[arg(long)]
     llm_model: Option<String>,
+
+    /// Expose all tools (default: only essential tools for better agent compliance)
+    #[arg(long)]
+    full_tools: bool,
 }
 
 #[derive(Subcommand)]
@@ -120,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         cli.llm_provider,
         cli.llm_api_key,
         cli.llm_model,
+        cli.full_tools,
     );
 
     server::run(config).await
@@ -155,105 +160,49 @@ fn auto_update_instructions() {
 }
 
 const TOOL_NAMES: &[&str] = &[
+    "process_turn",
     "store_memory",
     "search_memories",
-    "recall_memory",
-    "get_memory",
     "forget_memory",
-    "forget_all",
-    "relate_memories",
-    "get_related",
-    "find_path",
-    "get_subgraph",
-    "find_contradictions",
-    "write_inference",
-    "propagate_belief",
-    "extract_facts",
-    "compress_memory",
-    "consolidate_memories",
-    "detect_interference",
-    "assemble_context",
-    "check_stream",
-    "detect_phantoms",
-    "register_entity",
-    "resolve_phantom",
-    "record_pain",
-    "get_cognitive_state",
-    "record_trajectory",
-    "predict_topics",
-    "ingest_conversation",
-    "get_stats",
-    "evaluate_archival",
-    "apply_decay",
-    "process_turn",
-    "gdpr_forget",
 ];
 
 const AGENT_INSTRUCTIONS: &str = r#"# Memory
 
-You have persistent memory via MenteDB. Use it automatically, never wait to be asked.
+You have persistent memory via MenteDB. You have 4 tools — use them.
 
-## Every turn (MANDATORY)
+## ⚠️ process_turn — CALL EVERY TURN
 
-Call `process_turn` on EVERY conversation turn. This is the core memory loop:
-- Pass the user's message and your response
-- Increment `turn_id` each turn (start at 0)
-- It automatically:
-  - Searches for relevant past context via semantic similarity
-  - Stores the conversation as searchable episodic memory
-  - Runs write-time inference (contradiction detection, edge creation, confidence updates)
-  - Extracts structured facts (subject-predicate-object) and links them as edges
-  - Detects phantom entities (things referenced but not in memory)
-  - Checks your response against known facts for contradictions
-  - Tracks conversation trajectory and predicts next topics
-  - Runs periodic maintenance (decay every 50 turns, archival every 100, consolidation every 200)
+Call `process_turn` BEFORE responding, on EVERY turn. Pass `user_message` and `assistant_response`.
+- It stores the conversation, searches past context, runs inference, and detects contradictions.
+- Without this call, nothing is remembered.
+- Increment `turn_id` each turn (start at 0).
 
-On the FIRST turn, also call `get_cognitive_state` to check for active pain signals or knowledge gaps.
+## USE the returned context
 
-## USE the returned context (MANDATORY)
+When `process_turn` returns:
+- **context**: Truncated summaries with IDs from past conversations. Reference them in your response. Call `search_memories(id)` for full content.
+- **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before.
+- **contradictions**: If > 0, flag the inconsistency.
 
-When `process_turn` returns, READ the response and USE it:
-- **context**: These are relevant memories from past conversations, shown as truncated summaries with IDs. Reference them in your response when relevant. If you need the full content, call `recall_memory(id)`. If the user asks something you've discussed before, use this context instead of asking again.
-- **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before. Mention what went wrong.
-- **contradictions**: If > 0, flag the inconsistency to the user.
-- **predictions**: Use these to anticipate what the user might ask next.
-- **phantoms**: These are knowledge gaps — entities mentioned but not in memory. Consider asking about them or registering them.
+## store_memory — Save important facts
 
-This is what makes memory USEFUL. Storing without retrieving is pointless.
+When you notice important information, call `store_memory`:
+- **Preferences**: "User prefers Rust" → type: semantic, tags: [preference]
+- **Decisions**: "Using PostgreSQL" → type: semantic, tags: [decision]
+- **Corrections**: "Deadline is April, not March" → type: correction
+- **Procedures**: "Deploy with: cargo build --release" → type: procedural
+- **Mistakes**: "Never retag releases" → type: anti_pattern
 
-## Store important facts yourself (MANDATORY)
+Don't store chitchat. Store facts, preferences, decisions, corrections.
 
-YOU are the extraction engine. When you notice important information in the conversation, call `store_memory` immediately:
-- **Preferences**: "User prefers Rust for backends" → type: semantic, tags: [preference]
-- **Decisions**: "Using PostgreSQL for the database" → type: semantic, tags: [decision, architecture]
-- **Corrections**: "Actually the deadline is April, not March" → type: correction
-- **Procedures**: "Deploy with: cargo build --release && scp ..." → type: procedural
-- **Mistakes**: "Never retag releases — always bump version" → type: anti_pattern
+## search_memories — Look things up
 
-Don't store noise or chitchat. Store facts, preferences, decisions, and corrections.
+Pass a text query to search by similarity, or a memory UUID to get full content.
+Use proactively — if the user mentions a project, search for what you know about it.
 
-## When to use other tools
+## forget_memory — Delete memories
 
-- `search_memories`: When you need to look up something specific outside of `process_turn`. Use this proactively — if the user mentions a project or topic, search for what you know about it.
-- `record_pain`: When something goes wrong (bad advice, failed approach) so you can warn about it in the future.
-- `relate_memories`: When a fact changes, store the new fact and relate with `supersedes` pointing from new to old.
-- `forget_memory`: When the user says "forget" or "don't remember".
-- `register_entity`: Register important entities (people, tools, projects) so phantom detection can flag them.
-
-## Memory types
-
-- `semantic`: facts, decisions, preferences, project details (most common)
-- `episodic`: events, meetings, what happened (process_turn handles this)
-- `procedural`: how to do things, workflows, commands
-- `correction`: when the user corrects you
-- `anti_pattern`: mistakes to avoid
-
-## Tags
-
-Always add tags to stored memories. Use lowercase, descriptive tags like:
-- Project names: `project-mentedb`, `project-trading-bot`
-- Topics: `database`, `deployment`, `testing`, `preference`
-- Context: `decision`, `architecture`, `bug-fix`
+When the user says "forget" or "don't remember that", delete the memory by ID.
 "#;
 
 fn run_setup(client: SetupClient) -> anyhow::Result<()> {

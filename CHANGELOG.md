@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.15](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.14...mentedb-mcp-v0.2.15) (2026-04-06)
+
+
+### Features
+
+* slim tool mode — expose only 4 essential tools by default, --full-tools for all 32 ([4329d7e](https://github.com/nambok/mentedb-mcp/commit/4329d7e1118ff1be3a736eba70581a9ebbb5003f))
+
 ## [0.2.14](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.13...mentedb-mcp-v0.2.14) (2026-04-06)
 
 

@@ -353,25 +353,12 @@ fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Res
             })
             .unwrap_or("unknown");
 
-        if interactive {
-            eprintln!(
-                "\n  Agent instructions changed: v{} → v{}",
-                old_version,
-                env!("CARGO_PKG_VERSION")
-            );
-            eprintln!("  File: {}", path.display());
-            eprint!("  Update? [Y/n] ");
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let input = input.trim().to_lowercase();
-            if input == "n" || input == "no" {
-                eprintln!("  [skip] user declined update");
-                return Ok(());
-            }
-        }
+        // Extract the current MenteDB block to detect user edits
+        let has_mentedb_block =
+            content.contains("# Memory\n\nYou have persistent memory via MenteDB");
 
-        // Remove old MenteDB instructions block if present
-        let cleaned = if content.contains("# Memory\n\nYou have persistent memory via MenteDB") {
+        // Check for user customizations inside the MenteDB block
+        let user_customized = if has_mentedb_block {
             let start = content
                 .find("# Memory\n\nYou have persistent memory via MenteDB")
                 .unwrap();
@@ -380,7 +367,75 @@ fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Res
                 .find("\n# ")
                 .map(|i| start + i)
                 .unwrap_or(content.len());
-            let prefix = content[..start].trim_end().to_string();
+            let old_block = &content[start..end];
+            // Compare with what the old version would have had
+            // If user edited the block, the content won't match a clean install
+            // Simple heuristic: check for lines not in AGENT_INSTRUCTIONS
+            let agent_lines: std::collections::HashSet<&str> =
+                AGENT_INSTRUCTIONS.lines().map(|l| l.trim()).collect();
+            old_block
+                .lines()
+                .any(|l| !l.trim().is_empty() && !agent_lines.contains(l.trim()))
+        } else {
+            false
+        };
+
+        if interactive {
+            eprintln!(
+                "\n  Agent instructions update: v{} → v{}",
+                old_version,
+                env!("CARGO_PKG_VERSION")
+            );
+            eprintln!("  File: {}", path.display());
+
+            // Show the full instructions that will be written
+            eprintln!("\n  ┌─── Instructions to be written ───────────────────────────");
+            for line in AGENT_INSTRUCTIONS.lines() {
+                eprintln!("  │ {line}");
+            }
+            eprintln!("  └─────────────────────────────────────────────────────────");
+
+            if user_customized {
+                eprintln!("\n  ⚠️  Your file has custom edits inside the MenteDB block.");
+                eprintln!(
+                    "     These will be replaced. Your content OUTSIDE the block is preserved."
+                );
+                eprintln!("     A backup will be saved to: {}.bak", path.display());
+            }
+
+            eprint!("\n  Apply these instructions? [Y/n] ");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim().to_lowercase();
+            if input == "n" || input == "no" {
+                eprintln!("  [skip] user declined update");
+                return Ok(());
+            }
+
+            // Create backup if user has customizations
+            if user_customized {
+                let backup_path = path.with_extension("md.bak");
+                std::fs::copy(path, &backup_path)?;
+                eprintln!("  [backup] saved to: {}", backup_path.display());
+            }
+        }
+
+        // Remove old MenteDB instructions block, preserve everything else
+        let cleaned = if has_mentedb_block {
+            let start = content
+                .find("# Memory\n\nYou have persistent memory via MenteDB")
+                .unwrap();
+            let rest = &content[start..];
+            let end = rest
+                .find("\n# ")
+                .map(|i| start + i)
+                .unwrap_or(content.len());
+            // Also remove old version marker line above the block
+            let mut prefix_end = start;
+            if let Some(marker_start) = content[..start].rfind("<!-- mentedb-instructions-v") {
+                prefix_end = marker_start;
+            }
+            let prefix = content[..prefix_end].trim_end().to_string();
             let suffix = content[end..].to_string();
             format!("{prefix}\n{suffix}")
         } else {

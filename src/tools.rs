@@ -2004,10 +2004,17 @@ impl MenteDbServer {
             "process_turn complete"
         );
 
-        // Build compact context: just content strings the LLM needs
-        let context_summaries: Vec<&str> = context_items
+        // Build compact context: truncate long memories to avoid bloating LLM context
+        let context_summaries: Vec<String> = context_items
             .iter()
             .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
+            .map(|s| {
+                if s.len() > 500 {
+                    format!("{}...", &s[..500])
+                } else {
+                    s.to_string()
+                }
+            })
             .collect();
 
         Ok(CallToolResult::success(vec![Content::text(

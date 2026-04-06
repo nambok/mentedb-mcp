@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.13](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.12...mentedb-mcp-v0.2.13) (2026-04-06)
+
+
+### Features
+
+* prompt user confirmation before updating agent instructions in setup/update ([fae2ce1](https://github.com/nambok/mentedb-mcp/commit/fae2ce12323b7e128afe3279cc25124cc8e599d4))
+
+
+### Bug Fixes
+
+* show full instruction text before prompting user to confirm update ([cdd5a54](https://github.com/nambok/mentedb-mcp/commit/cdd5a545a48691f29e5811ab922333e88f4e4830))
+
 ## [0.2.12](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.11...mentedb-mcp-v0.2.12) (2026-04-06)
 
 

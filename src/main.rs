@@ -103,6 +103,9 @@ async fn main() -> anyhow::Result<()> {
         "mentedb-mcp starting"
     );
 
+    // Auto-update agent instructions on startup (silent, best-effort)
+    auto_update_instructions();
+
     let config = ServerConfig::new(
         data_dir,
         cli.embedding_dim,
@@ -112,6 +115,35 @@ async fn main() -> anyhow::Result<()> {
     );
 
     server::run(config).await
+}
+
+/// Auto-update agent instructions on startup.
+/// Checks all known instruction file paths and updates any with stale version markers.
+/// Runs silently — errors are logged but never block server startup.
+fn auto_update_instructions() {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+
+    let instruction_paths = [
+        // Copilot CLI
+        format!("{home}/.copilot/copilot-instructions.md"),
+        // Cursor
+        format!("{home}/.cursor/rules/mentedb.md"),
+    ];
+
+    for path_str in &instruction_paths {
+        let path = std::path::Path::new(path_str);
+        if path.exists() {
+            match append_instructions(path) {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "auto-update instructions failed");
+                }
+            }
+        }
+    }
 }
 
 const TOOL_NAMES: &[&str] = &[
@@ -236,14 +268,14 @@ fn which_mentedb_mcp() -> String {
 
 fn write_if_missing(path: &std::path::Path, content: &str, label: &str) -> anyhow::Result<bool> {
     if path.exists() {
-        println!("  [skip] {label} already exists: {}", path.display());
+        eprintln!("  [skip] {label} already exists: {}", path.display());
         Ok(false)
     } else {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, content)?;
-        println!("  [created] {label}: {}", path.display());
+        eprintln!("  [created] {label}: {}", path.display());
         Ok(true)
     }
 }
@@ -270,7 +302,7 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
         .or_insert_with(|| serde_json::json!({}));
 
     if servers.get("mentedb").is_some() {
-        println!("  [skip] mentedb already in MCP config: {}", path.display());
+        eprintln!("  [skip] mentedb already in MCP config: {}", path.display());
     } else {
         servers
             .as_object_mut()
@@ -280,7 +312,7 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(&config)?)?;
-        println!("  [created] MCP config: {}", path.display());
+        eprintln!("  [created] MCP config: {}", path.display());
     }
 
     Ok(())
@@ -295,7 +327,7 @@ fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
         if content.contains(&version_marker) {
-            println!(
+            eprintln!(
                 "  [skip] instructions already up-to-date: {}",
                 path.display()
             );
@@ -325,7 +357,7 @@ fn append_instructions(path: &std::path::Path) -> anyhow::Result<()> {
             cleaned.trim_end()
         );
         std::fs::write(path, updated)?;
-        println!(
+        eprintln!(
             "  [updated] refreshed MenteDB instructions: {}",
             path.display()
         );

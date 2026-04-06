@@ -34,6 +34,16 @@ mentedb-mcp setup cursor
 
 This creates the MCP config, agent instructions, and `alwaysAllow` list automatically. No manual file editing needed.
 
+### Updating
+
+After upgrading (`cargo install mentedb-mcp`), instructions auto-update on server startup. To manually review and confirm changes:
+
+```bash
+mentedb-mcp update copilot
+```
+
+The `update` command shows you the exact instructions that will be written and asks for confirmation. If you've customized the MenteDB block, it warns you and creates a `.bak` backup. Your own instructions outside the MenteDB block are always preserved.
+
 ### Manual Configuration
 
 If you prefer manual setup, see the client-specific configs below.

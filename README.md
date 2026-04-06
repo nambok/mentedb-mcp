@@ -8,7 +8,7 @@ The MCP (Model Context Protocol) server for MenteDB, the mind database for AI ag
 
 ## What is this?
 
-This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. Store, search, relate, and consolidate memories through the standard MCP protocol. The server exposes 32 tools spanning core memory operations, knowledge graph traversal, context assembly, memory consolidation, cognitive systems, and LLM based extraction, all over stdio transport.
+This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. By default, the server exposes **4 essential tools** for clean agent integration. Use `--full-tools` to expose all 32 tools for power users.
 
 ## Quick Start
 
@@ -106,22 +106,14 @@ Add to `~/.copilot/mcp-config.json`:
       "command": "mentedb-mcp",
       "args": ["--data-dir", "~/.mentedb"],
       "alwaysAllow": [
-        "store_memory", "get_memory", "recall_memory", "search_memories",
-        "relate_memories", "forget_memory", "forget_all", "ingest_conversation",
-        "assemble_context", "get_related", "find_path", "get_subgraph",
-        "find_contradictions", "propagate_belief", "consolidate_memories",
-        "apply_decay", "compress_memory", "evaluate_archival", "extract_facts",
-        "gdpr_forget", "process_turn", "record_pain", "detect_phantoms",
-        "resolve_phantom", "record_trajectory", "predict_topics",
-        "detect_interference", "check_stream", "write_inference",
-        "register_entity", "get_cognitive_state", "get_stats"
+        "process_turn", "store_memory", "search_memories", "forget_memory"
       ]
     }
   }
 }
 ```
 
-The `alwaysAllow` list lets memory tools run without approval prompts. Remove it if you prefer manual approval per tool call.
+The `alwaysAllow` list lets memory tools run without approval prompts. By default, only 4 essential tools are exposed. Add `--full-tools` to args to expose all 32 tools.
 
 ## Embeddings
 
@@ -147,7 +139,20 @@ Embeddings power search. For LLM based memory extraction via `ingest_conversatio
 
 Supported providers: `openai`, `anthropic`, `ollama`, `mock` (default). Without an API key, `ingest_conversation` uses the mock provider which does basic keyword extraction.
 
-## Available Tools (32 tools)
+## Default Tools (4 tools)
+
+By default, the server exposes only 4 essential tools for optimal agent compliance:
+
+| Tool | Description |
+|------|-------------|
+| `process_turn` | **⚠️ Call every turn.** Stores conversation, retrieves context, runs inference, detects contradictions. |
+| `store_memory` | Store an important fact with type and tags. |
+| `search_memories` | Semantic search by query, or get full content by memory UUID. |
+| `forget_memory` | Delete a memory by ID. |
+
+## All Tools (`--full-tools`, 32 tools)
+
+With `--full-tools`, all tools below are also exposed:
 
 ### Core Memory (8 tools)
 
@@ -223,6 +228,7 @@ Options:
   --llm-provider <PROVIDER>   LLM provider for extraction: openai, anthropic, ollama, mock [default: mock]
   --llm-api-key <KEY>         API key for the LLM provider (overrides env var)
   --llm-model <MODEL>         Model name override for the LLM provider
+  --full-tools                Expose all 32 tools (default: 4 essential tools)
   -h, --help                  Print help
 ```
 

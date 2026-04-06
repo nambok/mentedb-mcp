@@ -14,6 +14,8 @@ pub struct ServerConfig {
     pub llm_api_key: Option<String>,
     /// Optional model name override for the LLM provider.
     pub llm_model: Option<String>,
+    /// Expose all tools (for power users). Default: false (only essential tools).
+    pub full_tools: bool,
 }
 
 impl ServerConfig {
@@ -23,6 +25,7 @@ impl ServerConfig {
         llm_provider: String,
         llm_api_key: Option<String>,
         llm_model: Option<String>,
+        full_tools: bool,
     ) -> Self {
         Self {
             data_dir,
@@ -30,6 +33,7 @@ impl ServerConfig {
             llm_provider,
             llm_api_key,
             llm_model,
+            full_tools,
         }
     }
 

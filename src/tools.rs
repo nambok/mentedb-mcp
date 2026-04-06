@@ -2013,7 +2013,10 @@ impl MenteDbServer {
                 let content = ci.get("content").and_then(|c| c.as_str())?;
                 let id = ci.get("id").and_then(|i| i.as_str()).unwrap_or("");
                 let truncated = if content.len() > CTX_MAX_CHARS {
-                    format!("{}…", &content[..content.floor_char_boundary(CTX_MAX_CHARS)])
+                    format!(
+                        "{}…",
+                        &content[..content.floor_char_boundary(CTX_MAX_CHARS)]
+                    )
                 } else {
                     content.to_string()
                 };

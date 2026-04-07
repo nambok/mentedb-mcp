@@ -26,16 +26,16 @@ struct Cli {
     #[arg(long, default_value = "128")]
     embedding_dim: usize,
 
-    /// Default LLM provider for extraction: openai, anthropic, ollama, or mock
-    #[arg(long, default_value = "mock")]
+    /// LLM provider: openai, anthropic, ollama, or mock
+    #[arg(long, default_value = "mock", env = "MENTEDB_LLM_PROVIDER")]
     llm_provider: String,
 
-    /// API key for the LLM provider (overrides MENTEDB_LLM_API_KEY env var)
+    /// API key for the LLM provider
     #[arg(long, env = "MENTEDB_LLM_API_KEY")]
     llm_api_key: Option<String>,
 
     /// Model name override for the LLM provider
-    #[arg(long)]
+    #[arg(long, env = "MENTEDB_LLM_MODEL")]
     llm_model: Option<String>,
 
     /// Expose all tools (default: only essential tools for better agent compliance)
@@ -239,11 +239,43 @@ fn write_if_missing(path: &std::path::Path, content: &str, label: &str) -> anyho
 
 fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> {
     let allow_list: Vec<&str> = TOOL_NAMES.to_vec();
-    let mentedb_entry = serde_json::json!({
+    let mut mentedb_entry = serde_json::json!({
         "command": binary,
         "args": [],
         "alwaysAllow": allow_list,
     });
+
+    // If LLM env vars are set, include them so MCP clients pass them through
+    let mut env_vars = serde_json::Map::new();
+    if let Ok(provider) = std::env::var("MENTEDB_LLM_PROVIDER") {
+        env_vars.insert(
+            "MENTEDB_LLM_PROVIDER".to_string(),
+            serde_json::Value::String(provider),
+        );
+    }
+    if let Ok(key) = std::env::var("MENTEDB_LLM_API_KEY") {
+        env_vars.insert(
+            "MENTEDB_LLM_API_KEY".to_string(),
+            serde_json::Value::String(key),
+        );
+    } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        env_vars.insert(
+            "OPENAI_API_KEY".to_string(),
+            serde_json::Value::String(key),
+        );
+    }
+    if let Ok(model) = std::env::var("MENTEDB_LLM_MODEL") {
+        env_vars.insert(
+            "MENTEDB_LLM_MODEL".to_string(),
+            serde_json::Value::String(model),
+        );
+    }
+    if !env_vars.is_empty() {
+        mentedb_entry
+            .as_object_mut()
+            .unwrap()
+            .insert("env".to_string(), serde_json::Value::Object(env_vars));
+    }
 
     let mut config: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(path)?;

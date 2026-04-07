@@ -51,7 +51,7 @@ enum Commands {
         #[arg(value_enum, default_value = "copilot")]
         client: SetupClient,
     },
-    /// Update agent instructions for your MCP client (same as setup, but clearer intent)
+    /// Update MCP config and agent instructions (overwrites existing entries)
     Update {
         /// Target client
         #[arg(value_enum, default_value = "copilot")]
@@ -71,8 +71,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Setup { client }) => return run_setup(client),
-        Some(Commands::Update { client }) => return run_setup(client),
+        Some(Commands::Setup { client }) => return run_setup(client, false),
+        Some(Commands::Update { client }) => return run_setup(client, true),
         None => {}
     }
 
@@ -149,7 +149,7 @@ fn auto_update_instructions() {
     for path_str in &instruction_paths {
         let path = std::path::Path::new(path_str);
         if path.exists() {
-            match append_instructions(path, false) {
+            match append_instructions(path, false, false) {
                 Ok(()) => {}
                 Err(e) => {
                     tracing::warn!(path = %path.display(), error = %e, "auto-update instructions failed");
@@ -205,14 +205,14 @@ Use proactively — if the user mentions a project, search for what you know abo
 When the user says "forget" or "don't remember that", delete the memory by ID.
 "#;
 
-fn run_setup(client: SetupClient) -> anyhow::Result<()> {
+fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     let binary = which_mentedb_mcp();
 
     match client {
-        SetupClient::Copilot => setup_copilot(&home, &binary),
-        SetupClient::Claude => setup_claude(&home, &binary),
-        SetupClient::Cursor => setup_cursor(&home, &binary),
+        SetupClient::Copilot => setup_copilot(&home, &binary, force),
+        SetupClient::Claude => setup_claude(&home, &binary, force),
+        SetupClient::Cursor => setup_cursor(&home, &binary, force),
     }
 }
 
@@ -237,7 +237,7 @@ fn write_if_missing(path: &std::path::Path, content: &str, label: &str) -> anyho
     }
 }
 
-fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> {
+fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow::Result<()> {
     let allow_list: Vec<&str> = TOOL_NAMES.to_vec();
     let mut mentedb_entry = serde_json::json!({
         "command": binary,
@@ -287,7 +287,8 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
         .entry("mcpServers")
         .or_insert_with(|| serde_json::json!({}));
 
-    if servers.get("mentedb").is_some() {
+    let exists = servers.get("mentedb").is_some();
+    if exists && !force {
         eprintln!("  [skip] mentedb already in MCP config: {}", path.display());
     } else {
         servers
@@ -298,13 +299,18 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(&config)?)?;
-        eprintln!("  [created] MCP config: {}", path.display());
+        let verb = if exists { "updated" } else { "created" };
+        eprintln!("  [{verb}] MCP config: {}", path.display());
     }
 
     Ok(())
 }
 
-fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Result<()> {
+fn append_instructions(
+    path: &std::path::Path,
+    interactive: bool,
+    force: bool,
+) -> anyhow::Result<()> {
     let version_marker = format!(
         "<!-- mentedb-instructions-v{} -->",
         env!("CARGO_PKG_VERSION")
@@ -312,7 +318,7 @@ fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Res
 
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        if content.contains(&version_marker) {
+        if content.contains(&version_marker) && !force {
             eprintln!(
                 "  [skip] instructions already up-to-date: {}",
                 path.display()
@@ -436,34 +442,38 @@ fn append_instructions(path: &std::path::Path, interactive: bool) -> anyhow::Res
     Ok(())
 }
 
-fn setup_copilot(home: &str, binary: &str) -> anyhow::Result<()> {
+fn setup_copilot(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB for GitHub Copilot CLI...\n");
 
     let copilot_dir = std::path::PathBuf::from(home).join(".copilot");
-    merge_mcp_config(&copilot_dir.join("mcp-config.json"), binary)?;
-    append_instructions(&copilot_dir.join("copilot-instructions.md"), true)?;
+    merge_mcp_config(&copilot_dir.join("mcp-config.json"), binary, force)?;
+    append_instructions(&copilot_dir.join("copilot-instructions.md"), true, force)?;
 
     println!("\nDone! Restart Copilot CLI to activate MenteDB memory.");
     Ok(())
 }
 
-fn setup_claude(home: &str, binary: &str) -> anyhow::Result<()> {
+fn setup_claude(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB for Claude Desktop...\n");
 
     let config_dir = std::path::PathBuf::from(home).join("Library/Application Support/Claude");
-    merge_mcp_config(&config_dir.join("claude_desktop_config.json"), binary)?;
+    merge_mcp_config(
+        &config_dir.join("claude_desktop_config.json"),
+        binary,
+        force,
+    )?;
 
     println!("\nDone! Restart Claude Desktop to activate MenteDB memory.");
     println!("Note: Claude Desktop reads server instructions automatically from the MCP server.");
     Ok(())
 }
 
-fn setup_cursor(home: &str, binary: &str) -> anyhow::Result<()> {
+fn setup_cursor(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB for Cursor...\n");
 
     let cursor_dir = std::path::PathBuf::from(home).join(".cursor");
-    merge_mcp_config(&cursor_dir.join("mcp.json"), binary)?;
-    append_instructions(&cursor_dir.join("rules/mentedb.md"), true)?;
+    merge_mcp_config(&cursor_dir.join("mcp.json"), binary, force)?;
+    append_instructions(&cursor_dir.join("rules/mentedb.md"), true, force)?;
 
     println!("\nDone! Restart Cursor to activate MenteDB memory.");
     Ok(())

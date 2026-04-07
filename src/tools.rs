@@ -4,7 +4,7 @@ use mentedb::MenteDb;
 use mentedb_cognitive::trajectory::DecisionState;
 use mentedb_cognitive::{
     CognitionStream, InterferenceDetector, PainRegistry, PainSignal, PhantomConfig, PhantomTracker,
-    StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
+    SpeculativeCache, StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
 };
 use mentedb_consolidation::{
     ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
@@ -353,6 +353,7 @@ pub struct MenteDbServer {
     pain_registry: Arc<Mutex<PainRegistry>>,
     phantom_tracker: Arc<Mutex<PhantomTracker>>,
     trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
+    speculative_cache: Arc<Mutex<SpeculativeCache>>,
     delta_tracker: Arc<Mutex<DeltaTracker>>,
     #[allow(dead_code)]
     config: ServerConfig,
@@ -414,6 +415,7 @@ impl MenteDbServer {
             pain_registry: Arc::new(Mutex::new(PainRegistry::new(100))),
             phantom_tracker: Arc::new(Mutex::new(PhantomTracker::new(PhantomConfig::default()))),
             trajectory_tracker: Arc::new(Mutex::new(TrajectoryTracker::new(100))),
+            speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             config,
             tool_router,
@@ -516,6 +518,53 @@ fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
                 .map(|memory| ScoredMemory { memory, score: 1.0 })
         })
         .collect()
+}
+
+/// Full O(n) cosine scan for context retrieval (cache miss path).
+async fn full_context_scan(
+    all: &[ScoredMemory],
+    query_embedding: &[f32],
+    req: &ProcessTurnRequest,
+    delta_tracker: &Mutex<DeltaTracker>,
+) -> (Vec<serde_json::Value>, Vec<MemoryId>) {
+    let mut scored: Vec<(f32, &ScoredMemory)> = all
+        .iter()
+        .map(|sm| {
+            let sim = cosine_similarity(query_embedding, &sm.memory.embedding);
+            (sim, sm)
+        })
+        .filter(|(sim, _)| *sim > 0.3)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let top_scored: Vec<&ScoredMemory> = scored.iter().take(10).map(|(_, sm)| *sm).collect();
+    let current_ids: Vec<MemoryId> = top_scored.iter().map(|sm| sm.memory.id).collect();
+
+    let mut dt = delta_tracker.lock().await;
+    let delta = dt.compute_delta(&current_ids, &dt.last_served.clone());
+    dt.update(&current_ids);
+    drop(dt);
+
+    let items: Vec<serde_json::Value> = top_scored
+        .iter()
+        .take(5)
+        .map(|sm| {
+            let score = scored
+                .iter()
+                .find(|(_, s)| s.memory.id == sm.memory.id)
+                .map(|(s, _)| *s)
+                .unwrap_or(0.0);
+            let mut val = memory_node_to_json(&sm.memory);
+            val["relevance_score"] = json!(score);
+            val["is_new"] = json!(delta.added.contains(&sm.memory.id));
+            val["from_cache"] = json!(false);
+            if let Some(ctx) = &req.project_context {
+                val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
+            }
+            val
+        })
+        .collect();
+
+    (items, current_ids)
 }
 
 /// Find a specific memory by UUID using direct page_map lookup.
@@ -1018,6 +1067,9 @@ impl MenteDbServer {
         let pain = self.pain_registry.lock().await;
         let phantom = self.phantom_tracker.lock().await;
         let trajectory = self.trajectory_tracker.lock().await;
+        let cache = self.speculative_cache.lock().await;
+        let cache_stats = cache.stats();
+        drop(cache);
 
         let active_pain: Vec<serde_json::Value> = pain
             .all_signals()
@@ -1048,6 +1100,17 @@ impl MenteDbServer {
             "pain_signals": active_pain,
             "phantom_memories": phantoms,
             "trajectory": trajectory_info,
+            "speculative_cache": {
+                "hits": cache_stats.hits,
+                "misses": cache_stats.misses,
+                "evictions": cache_stats.evictions,
+                "cache_size": cache_stats.cache_size,
+                "hit_rate": if cache_stats.hits + cache_stats.misses > 0 {
+                    cache_stats.hits as f64 / (cache_stats.hits + cache_stats.misses) as f64
+                } else {
+                    0.0
+                },
+            },
         });
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -1638,57 +1701,79 @@ impl MenteDbServer {
         let start = std::time::Instant::now();
 
         // 1. Search for relevant context based on user message
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
         let query_embedding = self
             .embedding_provider
             .embed(&req.user_message)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
 
-        let mut scored: Vec<(f32, &ScoredMemory)> = all
-            .iter()
-            .map(|sm| {
-                let sim = cosine_similarity(&query_embedding, &sm.memory.embedding);
-                (sim, sm)
-            })
-            .filter(|(sim, _)| *sim > 0.3)
-            .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        let top_scored: Vec<&ScoredMemory> = scored.iter().take(10).map(|(_, sm)| *sm).collect();
-        let current_ids: Vec<MemoryId> = top_scored.iter().map(|sm| sm.memory.id).collect();
+        // Try the speculative cache before doing the full O(n) scan
+        let mut cache = self.speculative_cache.lock().await;
+        let cache_result = cache.try_hit(&req.user_message).map(|entry| {
+            (entry.memory_ids.clone(), entry.topic.clone())
+        });
+        drop(cache);
+        let cache_hit = cache_result.is_some();
 
-        // Delta computation: only send what changed since last turn
-        let mut delta_tracker = self.delta_tracker.lock().await;
-        let delta = delta_tracker.compute_delta(&current_ids, &delta_tracker.last_served.clone());
-        delta_tracker.update(&current_ids);
-        drop(delta_tracker);
+        let mut db = self.db.lock().await;
+        let all = recall_all_memories(&mut db);
 
-        // Build context response: always send full context, annotate what's new
-        let context_items: Vec<serde_json::Value> = top_scored
-            .iter()
-            .take(5)
-            .map(|sm| {
-                let score = scored
+        // On cache hit, use cached memory IDs for a targeted lookup instead of
+        // scoring every memory. Fall through to full scan if cached IDs are stale.
+        let (context_items, _current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result {
+            let cached_id_set: std::collections::HashSet<MemoryId> =
+                cached_ids.iter().cloned().collect();
+            let matched: Vec<&ScoredMemory> = all
+                .iter()
+                .filter(|sm| cached_id_set.contains(&sm.memory.id))
+                .collect();
+
+            if matched.len() >= cached_ids.len() / 2 {
+                // Enough cached IDs still exist, use them
+                let ids: Vec<MemoryId> = matched.iter().map(|sm| sm.memory.id).collect();
+                let mut delta_tracker = self.delta_tracker.lock().await;
+                let delta =
+                    delta_tracker.compute_delta(&ids, &delta_tracker.last_served.clone());
+                delta_tracker.update(&ids);
+                drop(delta_tracker);
+
+                let items: Vec<serde_json::Value> = matched
                     .iter()
-                    .find(|(_, s)| s.memory.id == sm.memory.id)
-                    .map(|(s, _)| *s)
-                    .unwrap_or(0.0);
-                let mut val = memory_node_to_json(&sm.memory);
-                val["relevance_score"] = json!(score);
-                val["is_new"] = json!(delta.added.contains(&sm.memory.id));
-                if let Some(ctx) = &req.project_context {
-                    val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
-                }
-                val
-            })
-            .collect();
-        let removed_ids: Vec<String> = delta.removed.iter().map(|id| id.to_string()).collect();
+                    .take(5)
+                    .map(|sm| {
+                        let mut val = memory_node_to_json(&sm.memory);
+                        val["relevance_score"] = json!(0.9);
+                        val["is_new"] = json!(delta.added.contains(&sm.memory.id));
+                        val["from_cache"] = json!(true);
+                        if let Some(ctx) = &req.project_context {
+                            val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
+                        }
+                        val
+                    })
+                    .collect();
+
+                tracing::debug!(
+                    cached_ids = cached_ids.len(),
+                    matched = matched.len(),
+                    "Speculative cache hit, skipped full scan"
+                );
+                (items, ids)
+            } else {
+                tracing::debug!(
+                    cached_ids = cached_ids.len(),
+                    matched = matched.len(),
+                    "Speculative cache hit but IDs stale, falling back to full scan"
+                );
+                full_context_scan(&all, &query_embedding, &req, &self.delta_tracker).await
+            }
+        } else {
+            full_context_scan(&all, &query_embedding, &req, &self.delta_tracker).await
+        };
+
+        let _removed_ids: Vec<String> = Vec::new(); // delta tracking handled above
         let _context_response = json!({
             "memories": context_items,
             "count": context_items.len(),
-            "new_count": delta.added.len(),
-            "removed": removed_ids,
-            "unchanged_count": delta.unchanged.len(),
+            "cache_hit": cache_hit,
         });
 
         // 2. Check pain signals
@@ -1934,6 +2019,42 @@ impl MenteDbServer {
         let predictions: Vec<String> = tracker.predict_next_topics().into_iter().collect();
         drop(tracker);
 
+        // 6. Pre-assemble speculative cache for predicted topics
+        if !predictions.is_empty() {
+            let embed_provider = Arc::clone(&self.embedding_provider);
+            let mut db_lock = self.db.lock().await;
+            let all_memories = recall_all_memories(&mut db_lock);
+            drop(db_lock);
+
+            let mut cache = self.speculative_cache.lock().await;
+            cache.pre_assemble(predictions.clone(), |topic| {
+                let topic_emb = embed_provider.embed(topic).ok()?;
+                let mut scored: Vec<(f32, &ScoredMemory)> = all_memories
+                    .iter()
+                    .map(|sm| {
+                        let sim = cosine_similarity(&topic_emb, &sm.memory.embedding);
+                        (sim, sm)
+                    })
+                    .filter(|(sim, _)| *sim > 0.3)
+                    .collect();
+                scored.sort_by(|a, b| {
+                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let top: Vec<&ScoredMemory> = scored.iter().take(5).map(|(_, sm)| *sm).collect();
+                if top.is_empty() {
+                    return None;
+                }
+                let context_text = top
+                    .iter()
+                    .map(|sm| sm.memory.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
+                let memory_ids: Vec<MemoryId> = top.iter().map(|sm| sm.memory.id).collect();
+                Some((context_text, memory_ids))
+            });
+            drop(cache);
+        }
+
         // ── Auto-maintenance (staggered) ──
         let mut maintenance: Vec<&str> = Vec::new();
         let turn = req.turn_id;
@@ -2047,7 +2168,7 @@ impl MenteDbServer {
         tracing::info!(
             turn_id = req.turn_id,
             context_count = context_items.len(),
-            new_memories = delta.added.len(),
+            cache_hit = cache_hit,
             memories_stored = stored_ids.len(),
             inference_applied,
             phantom_count,
@@ -2086,6 +2207,7 @@ impl MenteDbServer {
             "contradictions": contradiction_count,
             "phantoms": phantom_count,
             "predictions": predictions,
+            "cache_hit": cache_hit,
         })
         .to_string();
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.2](https://github.com/nambok/mentedb-mcp/compare/v0.4.1...v0.4.2) - 2026-04-07
+
+### Added
+
+- wire all cognitive features into MCP process_turn ([#29](https://github.com/nambok/mentedb-mcp/pull/29))
+
 ## [0.4.1](https://github.com/nambok/mentedb-mcp/compare/v0.4.0...v0.4.1) - 2026-04-07
 
 ### Other

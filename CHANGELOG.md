@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.3](https://github.com/nambok/mentedb-mcp/compare/v0.4.2...v0.4.3) - 2026-04-07
+
+### Fixed
+
+- `update` command now overwrites existing MCP config and instructions ([#31](https://github.com/nambok/mentedb-mcp/pull/31))
+
 ## [0.4.2](https://github.com/nambok/mentedb-mcp/compare/v0.4.1...v0.4.2) - 2026-04-07
 
 ### Added

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/nambok/mentedb-mcp/compare/v0.3.0...v0.4.0) - 2026-04-07
+
+### Other
+
+- Migrate from release-please to release-plz ([#24](https://github.com/nambok/mentedb-mcp/pull/24))
+- Wire speculative cache, expose stats, and add lock retry ([#23](https://github.com/nambok/mentedb-mcp/pull/23))
+- *(main)* release mentedb-mcp 0.3.0 ([#22](https://github.com/nambok/mentedb-mcp/pull/22))
+- release 0.3.0 ([#21](https://github.com/nambok/mentedb-mcp/pull/21))
+
 ## [0.3.0](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.15...mentedb-mcp-v0.3.0) (2026-04-07)
 
 

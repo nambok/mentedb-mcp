@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.15...mentedb-mcp-v0.3.0) (2026-04-07)
+
+
+### Release
+
+* release 0.3.0 ([#21](https://github.com/nambok/mentedb-mcp/issues/21)) ([d42977f](https://github.com/nambok/mentedb-mcp/commit/d42977f276ca924778c43097b48b7c5f9f78b839))
+
 ## [0.2.15](https://github.com/nambok/mentedb-mcp/compare/mentedb-mcp-v0.2.14...mentedb-mcp-v0.2.15) (2026-04-06)
 
 

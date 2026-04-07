@@ -17,7 +17,13 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     std::fs::create_dir_all(&config.data_dir)?;
 
-    let db = MenteDb::open(Path::new(&config.data_dir))?;
+    // Retry opening the database with a timeout to handle lock contention
+    // (e.g., another instance is shutting down)
+    let db = open_with_retry(
+        Path::new(&config.data_dir),
+        5,
+        std::time::Duration::from_secs(1),
+    )?;
     let server = MenteDbServer::new(db, config);
 
     // Keep a reference to the DB for graceful shutdown
@@ -68,4 +74,37 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     tracing::info!("MCP server shut down");
     Ok(())
+}
+
+/// Try to open the database, retrying on lock contention.
+/// This handles the case where a previous instance is still shutting down.
+fn open_with_retry(
+    path: &Path,
+    max_attempts: u32,
+    delay: std::time::Duration,
+) -> anyhow::Result<MenteDb> {
+    for attempt in 1..=max_attempts {
+        match MenteDb::open(path) {
+            Ok(db) => return Ok(db),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("locked") && attempt < max_attempts {
+                    tracing::info!(
+                        attempt,
+                        max_attempts,
+                        "Database is locked, waiting for other instance to release (retry in {:?})",
+                        delay
+                    );
+                    std::thread::sleep(delay);
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Failed to open database at {}: {}",
+                        path.display(),
+                        msg
+                    ));
+                }
+            }
+        }
+    }
+    unreachable!()
 }

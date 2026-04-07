@@ -259,10 +259,7 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str) -> anyhow::Result<()> 
             serde_json::Value::String(key),
         );
     } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        env_vars.insert(
-            "OPENAI_API_KEY".to_string(),
-            serde_json::Value::String(key),
-        );
+        env_vars.insert("OPENAI_API_KEY".to_string(), serde_json::Value::String(key));
     }
     if let Ok(model) = std::env::var("MENTEDB_LLM_MODEL") {
         env_vars.insert(

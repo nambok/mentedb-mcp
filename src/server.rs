@@ -19,7 +19,11 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     // Retry opening the database with a timeout to handle lock contention
     // (e.g., another instance is shutting down)
-    let db = open_with_retry(Path::new(&config.data_dir), 5, std::time::Duration::from_secs(1))?;
+    let db = open_with_retry(
+        Path::new(&config.data_dir),
+        5,
+        std::time::Duration::from_secs(1),
+    )?;
     let server = MenteDbServer::new(db, config);
 
     // Keep a reference to the DB for graceful shutdown

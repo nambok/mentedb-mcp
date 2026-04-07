@@ -1708,9 +1708,9 @@ impl MenteDbServer {
 
         // Try the speculative cache before doing the full O(n) scan
         let mut cache = self.speculative_cache.lock().await;
-        let cache_result = cache.try_hit(&req.user_message).map(|entry| {
-            (entry.memory_ids.clone(), entry.topic.clone())
-        });
+        let cache_result = cache
+            .try_hit(&req.user_message)
+            .map(|entry| (entry.memory_ids.clone(), entry.topic.clone()));
         drop(cache);
         let cache_hit = cache_result.is_some();
 
@@ -1719,7 +1719,8 @@ impl MenteDbServer {
 
         // On cache hit, use cached memory IDs for a targeted lookup instead of
         // scoring every memory. Fall through to full scan if cached IDs are stale.
-        let (context_items, _current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result {
+        let (context_items, _current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result
+        {
             let cached_id_set: std::collections::HashSet<MemoryId> =
                 cached_ids.iter().cloned().collect();
             let matched: Vec<&ScoredMemory> = all
@@ -1731,8 +1732,7 @@ impl MenteDbServer {
                 // Enough cached IDs still exist, use them
                 let ids: Vec<MemoryId> = matched.iter().map(|sm| sm.memory.id).collect();
                 let mut delta_tracker = self.delta_tracker.lock().await;
-                let delta =
-                    delta_tracker.compute_delta(&ids, &delta_tracker.last_served.clone());
+                let delta = delta_tracker.compute_delta(&ids, &delta_tracker.last_served.clone());
                 delta_tracker.update(&ids);
                 drop(delta_tracker);
 
@@ -2037,9 +2037,7 @@ impl MenteDbServer {
                     })
                     .filter(|(sim, _)| *sim > 0.3)
                     .collect();
-                scored.sort_by(|a, b| {
-                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
                 let top: Vec<&ScoredMemory> = scored.iter().take(5).map(|(_, sm)| *sm).collect();
                 if top.is_empty() {
                     return None;

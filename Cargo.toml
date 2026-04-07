@@ -15,14 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io"] }
-mentedb = "0.2"
-mentedb-core = "0.2"
-mentedb-graph = "0.2"
-mentedb-cognitive = "0.2"
-mentedb-context = "0.2"
-mentedb-embedding = { version = "0.2", features = ["local"] }
-mentedb-extraction = "0.2"
-mentedb-consolidation = "0.2"
+mentedb = "0.4"
+mentedb-core = "0.4"
+mentedb-graph = "0.4"
+mentedb-cognitive = "0.4"
+mentedb-context = "0.4"
+mentedb-embedding = { version = "0.4", features = ["local"] }
+mentedb-extraction = "0.4"
+mentedb-consolidation = "0.4"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

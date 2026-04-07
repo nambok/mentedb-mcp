@@ -237,6 +237,8 @@ Options:
 | Variable | Description |
 |----------|-------------|
 | `MENTEDB_LLM_API_KEY` | Default API key for LLM extraction (also read by `--llm-api-key`) |
+| `MENTEDB_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `ollama`, `mock` (also read by `--llm-provider`) |
+| `MENTEDB_LLM_MODEL` | Model name override for the LLM provider (also read by `--llm-model`) |
 | `OPENAI_API_KEY` | Fallback API key when using the OpenAI provider |
 | `ANTHROPIC_API_KEY` | Fallback API key when using the Anthropic provider |
 | `RUST_LOG` | Logging filter, e.g. `RUST_LOG=mentedb_mcp=debug` |

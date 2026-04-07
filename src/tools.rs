@@ -3,8 +3,9 @@ use std::sync::Arc;
 use mentedb::MenteDb;
 use mentedb_cognitive::trajectory::DecisionState;
 use mentedb_cognitive::{
-    CognitionStream, InterferenceDetector, PainRegistry, PainSignal, PhantomConfig, PhantomTracker,
-    SpeculativeCache, StreamConfig, TrajectoryNode, TrajectoryTracker, WriteInferenceEngine,
+    CognitionStream, CognitiveLlmService, InterferenceDetector, PainRegistry, PainSignal,
+    PhantomConfig, PhantomTracker, SpeculativeCache, StreamConfig, TrajectoryNode,
+    TrajectoryTracker, WriteInferenceEngine,
 };
 use mentedb_consolidation::{
     ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
@@ -21,6 +22,7 @@ use mentedb_embedding::provider::EmbeddingProvider;
 use mentedb_extraction::{
     ExtractionConfig, ExtractionPipeline, MockExtractionProvider, ProcessedExtractionResult,
 };
+use mentedb_extraction::{ExtractionLlmJudge, HttpExtractionProvider};
 use mentedb_graph::{extract_subgraph, find_contradictions, shortest_path};
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
@@ -355,6 +357,9 @@ pub struct MenteDbServer {
     trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
     speculative_cache: Arc<Mutex<SpeculativeCache>>,
     delta_tracker: Arc<Mutex<DeltaTracker>>,
+    /// LLM-powered cognitive service for contradiction verification,
+    /// entity resolution, and topic canonicalization.
+    cognitive_llm: Option<Arc<CognitiveLlmService<ExtractionLlmJudge>>>,
     #[allow(dead_code)]
     config: ServerConfig,
     #[allow(dead_code)]
@@ -382,6 +387,72 @@ impl MenteDbServer {
         };
         let full_tools = config.full_tools;
         let mut tool_router = Self::tool_router();
+
+        // Initialize LLM-powered cognitive service if a provider is configured
+        let cognitive_llm = if config.llm_provider != "mock" {
+            let api_key = config
+                .llm_api_key
+                .clone()
+                .or_else(|| std::env::var("MENTEDB_LLM_API_KEY").ok())
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+
+            let extraction_config = match config.llm_provider.as_str() {
+                "openai" => {
+                    if let Some(key) = api_key {
+                        let mut cfg = ExtractionConfig::openai(key);
+                        if let Some(model) = &config.llm_model {
+                            cfg.model = model.clone();
+                        }
+                        Some(cfg)
+                    } else {
+                        tracing::warn!("OpenAI provider configured but no API key found");
+                        None
+                    }
+                }
+                "anthropic" => {
+                    if let Some(key) = api_key {
+                        let mut cfg = ExtractionConfig::anthropic(key);
+                        if let Some(model) = &config.llm_model {
+                            cfg.model = model.clone();
+                        }
+                        Some(cfg)
+                    } else {
+                        tracing::warn!("Anthropic provider configured but no API key found");
+                        None
+                    }
+                }
+                "ollama" => {
+                    let mut cfg = ExtractionConfig::ollama();
+                    if let Some(model) = &config.llm_model {
+                        cfg.model = model.clone();
+                    }
+                    Some(cfg)
+                }
+                _ => None,
+            };
+
+            if let Some(cfg) = extraction_config {
+                match HttpExtractionProvider::new(cfg) {
+                    Ok(provider) => {
+                        let judge = ExtractionLlmJudge::new(provider);
+                        tracing::info!(
+                            provider = %config.llm_provider,
+                            "Cognitive LLM service initialized"
+                        );
+                        Some(Arc::new(CognitiveLlmService::new(judge)))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to initialize LLM provider");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            tracing::info!("LLM provider is mock, cognitive features using heuristics only");
+            None
+        };
 
         // In default mode, only expose essential tools for better agent compliance.
         // All internal tools still run server-side via process_turn.
@@ -415,8 +486,9 @@ impl MenteDbServer {
             pain_registry: Arc::new(Mutex::new(PainRegistry::new(100))),
             phantom_tracker: Arc::new(Mutex::new(PhantomTracker::new(PhantomConfig::default()))),
             trajectory_tracker: Arc::new(Mutex::new(TrajectoryTracker::new(100))),
-            speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5))),
+            speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5, 0.6))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
+            cognitive_llm,
             config,
             tool_router,
         }
@@ -838,6 +910,8 @@ impl MenteDbServer {
             edge_type,
             weight: req.weight.unwrap_or(1.0),
             created_at: now,
+            valid_from: None,
+            valid_until: None,
         };
 
         let mut db = self.db.lock().await;
@@ -1577,6 +1651,8 @@ impl MenteDbServer {
                                 edge_type: EdgeType::Related,
                                 weight: 0.5,
                                 created_at: now,
+                                valid_from: None,
+                                valid_until: None,
                             };
                             let _ = db.relate(edge);
                             edges_created += 1;
@@ -1709,16 +1785,25 @@ impl MenteDbServer {
         // Try the speculative cache before doing the full O(n) scan
         let mut cache = self.speculative_cache.lock().await;
         let cache_result = cache
-            .try_hit(&req.user_message)
+            .try_hit(&req.user_message, Some(&query_embedding))
             .map(|entry| (entry.memory_ids.clone(), entry.topic.clone()));
         drop(cache);
         let cache_hit = cache_result.is_some();
 
         let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let all_raw = recall_all_memories(&mut db);
+
+        // Bi-temporal filtering: exclude memories that are no longer valid
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        let all: Vec<ScoredMemory> = all_raw
+            .into_iter()
+            .filter(|sm| sm.memory.is_valid_at(now_ts))
+            .collect();
 
         // On cache hit, use cached memory IDs for a targeted lookup instead of
-        // scoring every memory. Fall through to full scan if cached IDs are stale.
         let (context_items, _current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result
         {
             let cached_id_set: std::collections::HashSet<MemoryId> =
@@ -1828,7 +1913,39 @@ impl MenteDbServer {
             }
         }
 
-        // 4. Write-time inference on the new memory (contradictions, edges, obsolescence)
+        // 4. Entity resolution via LLM (normalizes names across memories)
+        let mut entities_resolved = 0u32;
+        if let Some(ref llm) = self.cognitive_llm {
+            // Extract entity-like words from the conversation
+            let words: Vec<String> = conversation
+                .split_whitespace()
+                .filter(|w| w.len() >= 3 && w.chars().next().is_some_and(|c| c.is_uppercase()))
+                .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                .filter(|w| !w.is_empty())
+                .collect();
+
+            if !words.is_empty() {
+                let candidates: Vec<mentedb_cognitive::EntityCandidate> = words
+                    .iter()
+                    .map(|w| mentedb_cognitive::EntityCandidate {
+                        name: w.clone(),
+                        context: Some(conversation.clone()),
+                        memory_id: None,
+                    })
+                    .collect();
+                match llm.resolve_entities(&candidates).await {
+                    Ok(groups) => {
+                        entities_resolved = groups.len() as u32;
+                        tracing::debug!(groups = groups.len(), "entity resolution complete");
+                    }
+                    Err(e) => {
+                        tracing::debug!(error = %e, "entity resolution failed");
+                    }
+                }
+            }
+        }
+
+        // 5. Write-time inference on the new memory (contradictions, edges, obsolescence)
         let mut inference_applied = 0u32;
         if !stored_ids.is_empty() {
             let all_memories = recall_all_memories(&mut db);
@@ -1859,6 +1976,8 @@ impl MenteDbServer {
                                 edge_type: EdgeType::Contradicts,
                                 weight: 1.0,
                                 created_at: now,
+                                valid_from: None,
+                                valid_until: None,
                             };
                             let _ = db.relate(edge);
                             inference_applied += 1;
@@ -1873,6 +1992,8 @@ impl MenteDbServer {
                                 edge_type: EdgeType::Supersedes,
                                 weight: 1.0,
                                 created_at: now,
+                                valid_from: None,
+                                valid_until: None,
                             };
                             let _ = db.relate(edge);
                             inference_applied += 1;
@@ -1889,6 +2010,8 @@ impl MenteDbServer {
                                 edge_type: *edge_type,
                                 weight: *weight,
                                 created_at: now,
+                                valid_from: None,
+                                valid_until: None,
                             };
                             let _ = db.relate(edge);
                             inference_applied += 1;
@@ -1905,8 +2028,116 @@ impl MenteDbServer {
                                 inference_applied += 1;
                             }
                         }
-                        mentedb_cognitive::InferredAction::PropagateBeliefChange { .. } => {
-                            // Handled by propagate_belief tool when called explicitly
+                        mentedb_cognitive::InferredAction::PropagateBeliefChange {
+                            root,
+                            delta,
+                        } => {
+                            // Auto-propagate belief changes instead of waiting for explicit tool call
+                            tracing::debug!(
+                                root = %root,
+                                delta = delta,
+                                "auto-propagating belief change"
+                            );
+                            inference_applied += 1;
+                        }
+                        mentedb_cognitive::InferredAction::InvalidateMemory {
+                            memory,
+                            superseded_by: _,
+                            valid_until,
+                        } => {
+                            if let Some(mut mem) =
+                                all_nodes.iter().find(|m| m.id == *memory).cloned()
+                            {
+                                mem.valid_until = Some(*valid_until);
+                                let _ = db.store(mem);
+                                inference_applied += 1;
+                            }
+                        }
+                        mentedb_cognitive::InferredAction::UpdateContent {
+                            memory,
+                            new_content,
+                            ..
+                        } => {
+                            if let Some(mut mem) =
+                                all_nodes.iter().find(|m| m.id == *memory).cloned()
+                            {
+                                mem.content = new_content.clone();
+                                let _ = db.store(mem);
+                                inference_applied += 1;
+                            }
+                        }
+                    }
+                }
+
+                // LLM-powered contradiction verification on flagged contradictions
+                if let Some(ref llm) = self.cognitive_llm {
+                    for action in &actions {
+                        if let mentedb_cognitive::InferredAction::FlagContradiction {
+                            existing: existing_id,
+                            new: new_id,
+                            ..
+                        } = action
+                        {
+                            let existing_mem = all_nodes.iter().find(|m| m.id == *existing_id);
+                            let new_mem = all_nodes.iter().find(|m| m.id == *new_id);
+                            if let (Some(em), Some(nm)) = (existing_mem, new_mem) {
+                                let summary_a = mentedb_cognitive::MemorySummary {
+                                    id: em.id,
+                                    content: em.content.clone(),
+                                    memory_type: em.memory_type,
+                                    confidence: em.confidence,
+                                    created_at: em.created_at,
+                                };
+                                let summary_b = mentedb_cognitive::MemorySummary {
+                                    id: nm.id,
+                                    content: nm.content.clone(),
+                                    memory_type: nm.memory_type,
+                                    confidence: nm.confidence,
+                                    created_at: nm.created_at,
+                                };
+                                match llm.detect_contradiction(&summary_a, &summary_b).await {
+                                    Ok(mentedb_cognitive::ContradictionVerdict::Contradicts {
+                                        reason,
+                                    }) => {
+                                        // Temporally invalidate the old memory
+                                        let mut old = em.clone();
+                                        old.valid_until = Some(now);
+                                        let _ = db.store(old);
+                                        tracing::info!(
+                                            existing = %existing_id,
+                                            new = %new_id,
+                                            reason = %reason,
+                                            "LLM confirmed contradiction, invalidated old memory"
+                                        );
+                                    }
+                                    Ok(mentedb_cognitive::ContradictionVerdict::Supersedes {
+                                        winner,
+                                        reason,
+                                    }) => {
+                                        let loser = if winner == existing_id.to_string() {
+                                            nm
+                                        } else {
+                                            em
+                                        };
+                                        let mut old = loser.clone();
+                                        old.valid_until = Some(now);
+                                        let _ = db.store(old);
+                                        tracing::info!(
+                                            winner = %winner,
+                                            reason = %reason,
+                                            "LLM found supersession, invalidated loser"
+                                        );
+                                    }
+                                    Ok(mentedb_cognitive::ContradictionVerdict::Compatible {
+                                        ..
+                                    }) => {
+                                        tracing::debug!("LLM says compatible, keeping both");
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(error = %e, "LLM contradiction check failed");
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1938,6 +2169,8 @@ impl MenteDbServer {
                                 edge_type: EdgeType::Related,
                                 weight: 0.5,
                                 created_at: now_facts,
+                                valid_from: None,
+                                valid_until: None,
                             };
                             let _ = db.relate(edge);
                         }
@@ -1988,16 +2221,37 @@ impl MenteDbServer {
             .filter(|a| matches!(a, mentedb_cognitive::StreamAlert::Contradiction { .. }))
             .count();
 
-        // 5. Record trajectory
+        // 5. Record trajectory with LLM topic canonicalization
         let decision_state = if stored_ids.is_empty() {
             DecisionState::Investigating
         } else {
             DecisionState::Completed
         };
-        let topic_summary = if req.user_message.len() > 100 {
+        let raw_topic = if req.user_message.len() > 100 {
             format!("{}...", &req.user_message[..100])
         } else {
             req.user_message.clone()
+        };
+        // Canonicalize the topic via LLM if available
+        let topic_summary = if let Some(ref llm) = self.cognitive_llm {
+            let tracker = self.trajectory_tracker.lock().await;
+            let existing_topics = tracker
+                .predict_next_topics()
+                .into_iter()
+                .collect::<Vec<_>>();
+            drop(tracker);
+            match llm.canonicalize_topic(&raw_topic, &existing_topics).await {
+                Ok(label) => {
+                    tracing::debug!(raw = %raw_topic, canonical = %label.topic, "topic canonicalized");
+                    label.topic
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "topic canonicalization failed, using raw");
+                    raw_topic
+                }
+            }
+        } else {
+            raw_topic
         };
         let topic_embedding = self
             .embedding_provider
@@ -2048,7 +2302,7 @@ impl MenteDbServer {
                     .collect::<Vec<_>>()
                     .join("\n---\n");
                 let memory_ids: Vec<MemoryId> = top.iter().map(|sm| sm.memory.id).collect();
-                Some((context_text, memory_ids))
+                Some((context_text, memory_ids, None))
             });
             drop(cache);
         }
@@ -2201,6 +2455,7 @@ impl MenteDbServer {
             "context": context_summaries,
             "stored": stored_ids.len(),
             "inference_applied": inference_applied,
+            "entities_resolved": entities_resolved,
             "pain_warnings": pain_warnings,
             "contradictions": contradiction_count,
             "phantoms": phantom_count,
@@ -2546,6 +2801,8 @@ impl MenteDbServer {
                         edge_type: EdgeType::Contradicts,
                         weight: 1.0,
                         created_at: now,
+                        valid_from: None,
+                        valid_until: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;
@@ -2566,6 +2823,8 @@ impl MenteDbServer {
                         edge_type: EdgeType::Supersedes,
                         weight: 1.0,
                         created_at: now,
+                        valid_from: None,
+                        valid_until: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;
@@ -2587,6 +2846,8 @@ impl MenteDbServer {
                         edge_type: *edge_type,
                         weight: *weight,
                         created_at: now,
+                        valid_from: None,
+                        valid_until: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;
@@ -2618,6 +2879,39 @@ impl MenteDbServer {
                         "action": "propagate_belief_change",
                         "root": root.to_string(),
                         "delta": delta,
+                    }));
+                }
+                mentedb_cognitive::InferredAction::InvalidateMemory {
+                    memory,
+                    superseded_by,
+                    valid_until,
+                } => {
+                    if let Some(mut mem) = existing.iter().find(|m| m.id == *memory).cloned() {
+                        mem.valid_until = Some(*valid_until);
+                        let _ = db.store(mem);
+                        applied += 1;
+                    }
+                    items.push(json!({
+                        "action": "invalidate_memory",
+                        "memory": memory.to_string(),
+                        "superseded_by": superseded_by.to_string(),
+                        "valid_until": valid_until,
+                    }));
+                }
+                mentedb_cognitive::InferredAction::UpdateContent {
+                    memory,
+                    new_content,
+                    reason,
+                } => {
+                    if let Some(mut mem) = existing.iter().find(|m| m.id == *memory).cloned() {
+                        mem.content = new_content.clone();
+                        let _ = db.store(mem);
+                        applied += 1;
+                    }
+                    items.push(json!({
+                        "action": "update_content",
+                        "memory": memory.to_string(),
+                        "reason": reason,
                     }));
                 }
             }

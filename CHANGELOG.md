@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1](https://github.com/nambok/mentedb-mcp/compare/v0.4.0...v0.4.1) - 2026-04-07
+
+### Other
+
+- Use standard conventional commits for releases ([#27](https://github.com/nambok/mentedb-mcp/pull/27))
+
 ## [0.4.0](https://github.com/nambok/mentedb-mcp/compare/v0.3.0...v0.4.0) - 2026-04-07
 
 ### Other

@@ -287,10 +287,38 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow
         .entry("mcpServers")
         .or_insert_with(|| serde_json::json!({}));
 
-    let exists = servers.get("mentedb").is_some();
-    if exists && !force {
+    let existing = servers.get("mentedb").cloned();
+    if existing.is_some() && !force {
         eprintln!("  [skip] mentedb already in MCP config: {}", path.display());
     } else {
+        // When updating, preserve user-configured fields (args, env) that we
+        // don't generate ourselves.  Only overwrite command and alwaysAllow.
+        if let Some(old) = &existing {
+            if let Some(old_obj) = old.as_object() {
+                let new_obj = mentedb_entry.as_object_mut().unwrap();
+                // Preserve args if the new entry has none
+                if new_obj
+                    .get("args")
+                    .and_then(|a| a.as_array())
+                    .map_or(true, |a| a.is_empty())
+                {
+                    if let Some(old_args) = old_obj.get("args") {
+                        new_obj.insert("args".to_string(), old_args.clone());
+                    }
+                }
+                // Merge env: keep old vars, overlay new ones
+                if let Some(old_env) = old_obj.get("env").and_then(|e| e.as_object()) {
+                    let new_env = new_obj
+                        .entry("env")
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let Some(new_env_obj) = new_env.as_object_mut() {
+                        for (k, v) in old_env {
+                            new_env_obj.entry(k.clone()).or_insert(v.clone());
+                        }
+                    }
+                }
+            }
+        }
         servers
             .as_object_mut()
             .unwrap()
@@ -299,7 +327,11 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(&config)?)?;
-        let verb = if exists { "updated" } else { "created" };
+        let verb = if existing.is_some() {
+            "updated"
+        } else {
+            "created"
+        };
         eprintln!("  [{verb}] MCP config: {}", path.display());
     }
 

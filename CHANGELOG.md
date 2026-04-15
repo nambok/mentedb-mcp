@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.4](https://github.com/nambok/mentedb-mcp/compare/v0.4.3...v0.4.4) - 2026-04-15
+
+### Added
+
+- cognitive improvements (action detection, anti-patterns, sentiment, ghost memories) ([#40](https://github.com/nambok/mentedb-mcp/pull/40))
+
 ## [0.4.3](https://github.com/nambok/mentedb-mcp/compare/v0.4.2...v0.4.3) - 2026-04-07
 
 ### Fixed

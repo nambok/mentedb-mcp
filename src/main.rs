@@ -10,7 +10,7 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use config::ServerConfig;
+use config::{Credentials, ServerConfig};
 
 #[derive(Parser)]
 #[command(name = "mentedb-mcp", about = "MCP server for MenteDB")]
@@ -57,6 +57,20 @@ enum Commands {
         #[arg(value_enum, default_value = "copilot")]
         client: SetupClient,
     },
+    /// Log in to MenteDB Cloud via browser
+    Login {
+        /// Target client
+        #[arg(value_enum, default_value = "copilot")]
+        client: SetupClient,
+    },
+    /// Log out of MenteDB Cloud and revert to local mode
+    Logout {
+        /// Target client
+        #[arg(value_enum, default_value = "copilot")]
+        client: SetupClient,
+    },
+    /// Show current MenteDB status (local or cloud mode)
+    Status,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -73,6 +87,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Setup { client }) => return run_setup(client, false),
         Some(Commands::Update { client }) => return run_setup(client, true),
+        Some(Commands::Login { client }) => return run_login(client).await,
+        Some(Commands::Logout { client }) => return run_logout(client),
+        Some(Commands::Status) => return run_status().await,
         None => {}
     }
 
@@ -170,7 +187,15 @@ const AGENT_INSTRUCTIONS: &str = r#"# Memory
 
 You have persistent memory via MenteDB. You have 4 tools — use them.
 
-## ⚠️ process_turn — CALL EVERY TURN
+## PRIVACY
+
+Memory data is private to this user. Never include memory content in:
+- Code commits or pull requests
+- Logs, error reports, or diagnostics shared with third parties
+- Responses to other users in shared/team contexts
+When referencing memories, summarize rather than quoting raw stored content.
+
+## process_turn — CALL EVERY TURN
 
 Call `process_turn` BEFORE responding, on EVERY turn. Pass `user_message` and `assistant_response`.
 - It stores the conversation, searches past context, runs inference, and detects contradictions.
@@ -238,41 +263,70 @@ fn write_if_missing(path: &std::path::Path, content: &str, label: &str) -> anyho
 }
 
 fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow::Result<()> {
-    let allow_list: Vec<&str> = TOOL_NAMES.to_vec();
-    let mut mentedb_entry = serde_json::json!({
-        "command": binary,
-        "args": [],
-        "alwaysAllow": allow_list,
-    });
+    merge_mcp_config_inner(path, binary, force, false, None)
+}
 
-    // If LLM env vars are set, include them so MCP clients pass them through
-    let mut env_vars = serde_json::Map::new();
-    if let Ok(provider) = std::env::var("MENTEDB_LLM_PROVIDER") {
-        env_vars.insert(
-            "MENTEDB_LLM_PROVIDER".to_string(),
-            serde_json::Value::String(provider),
-        );
-    }
-    if let Ok(key) = std::env::var("MENTEDB_LLM_API_KEY") {
-        env_vars.insert(
-            "MENTEDB_LLM_API_KEY".to_string(),
-            serde_json::Value::String(key),
-        );
-    } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        env_vars.insert("OPENAI_API_KEY".to_string(), serde_json::Value::String(key));
-    }
-    if let Ok(model) = std::env::var("MENTEDB_LLM_MODEL") {
-        env_vars.insert(
-            "MENTEDB_LLM_MODEL".to_string(),
-            serde_json::Value::String(model),
-        );
-    }
-    if !env_vars.is_empty() {
-        mentedb_entry
-            .as_object_mut()
-            .unwrap()
-            .insert("env".to_string(), serde_json::Value::Object(env_vars));
-    }
+/// Write a cloud-mode MCP config entry (SSE transport with auth header).
+fn merge_mcp_config_cloud(path: &std::path::Path, api_key: &str) -> anyhow::Result<()> {
+    merge_mcp_config_inner(path, "", true, true, Some(api_key))
+}
+
+/// Shared implementation for local (stdio) and cloud (SSE) MCP config merging.
+fn merge_mcp_config_inner(
+    path: &std::path::Path,
+    binary: &str,
+    force: bool,
+    cloud: bool,
+    api_key: Option<&str>,
+) -> anyhow::Result<()> {
+    let mentedb_entry = if cloud {
+        let key = api_key.expect("api_key required for cloud config");
+        serde_json::json!({
+            "url": Credentials::sse_url(),
+            "headers": {
+                "Authorization": format!("Bearer {key}")
+            }
+        })
+    } else {
+        let allow_list: Vec<&str> = TOOL_NAMES.to_vec();
+        let mut entry = serde_json::json!({
+            "command": binary,
+            "args": [],
+            "alwaysAllow": allow_list,
+        });
+
+        // If LLM env vars are set, include them so MCP clients pass them through
+        let mut env_vars = serde_json::Map::new();
+        if let Ok(provider) = std::env::var("MENTEDB_LLM_PROVIDER") {
+            env_vars.insert(
+                "MENTEDB_LLM_PROVIDER".to_string(),
+                serde_json::Value::String(provider),
+            );
+        }
+        if let Ok(key) = std::env::var("MENTEDB_LLM_API_KEY") {
+            env_vars.insert(
+                "MENTEDB_LLM_API_KEY".to_string(),
+                serde_json::Value::String(key),
+            );
+        } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            env_vars.insert("OPENAI_API_KEY".to_string(), serde_json::Value::String(key));
+        }
+        if let Ok(model) = std::env::var("MENTEDB_LLM_MODEL") {
+            env_vars.insert(
+                "MENTEDB_LLM_MODEL".to_string(),
+                serde_json::Value::String(model),
+            );
+        }
+        if !env_vars.is_empty() {
+            entry
+                .as_object_mut()
+                .unwrap()
+                .insert("env".to_string(), serde_json::Value::Object(env_vars));
+        }
+        entry
+    };
+
+    let mut mentedb_entry = mentedb_entry;
 
     let mut config: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(path)?;
@@ -291,9 +345,10 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow
     if existing.is_some() && !force {
         eprintln!("  [skip] mentedb already in MCP config: {}", path.display());
     } else {
-        // When updating, preserve user-configured fields (args, env) that we
-        // don't generate ourselves.  Only overwrite command and alwaysAllow.
-        if let Some(old) = &existing
+        // For local (stdio) mode, preserve user-configured fields (args, env)
+        // that we don't generate ourselves. For cloud mode, we replace entirely.
+        if !cloud
+            && let Some(old) = &existing
             && let Some(old_obj) = old.as_object()
         {
             let new_obj = mentedb_entry.as_object_mut().unwrap();
@@ -331,6 +386,16 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow
         } else {
             "created"
         };
+        // Transparency: tell the user exactly what was written
+        eprintln!("Updating MCP config: {}", path.display());
+        if cloud {
+            eprintln!(
+                "  Setting mcpServers.mentedb -> cloud endpoint ({})",
+                Credentials::sse_url()
+            );
+        } else {
+            eprintln!("  Setting mcpServers.mentedb -> local stdio ({binary})");
+        }
         eprintln!("  [{verb}] MCP config: {}", path.display());
     }
 
@@ -457,16 +522,28 @@ fn append_instructions(
             content
         };
 
+        // Create backup before writing
+        let backup_path = path.with_extension("md.bak");
+        std::fs::copy(path, &backup_path)?;
+
         let updated = format!(
             "{}\n\n{version_marker}\n{AGENT_INSTRUCTIONS}",
             cleaned.trim_end()
         );
         std::fs::write(path, updated)?;
+        // Transparency: tell the user exactly what was written
+        eprintln!("Updating instructions: {}", path.display());
         eprintln!(
-            "  [updated] refreshed MenteDB instructions: {}",
-            path.display()
+            "  Writing mentedb memory instructions v{}",
+            env!("CARGO_PKG_VERSION")
         );
+        eprintln!("  Backup saved: {}", backup_path.display());
     } else {
+        eprintln!("Updating instructions: {}", path.display());
+        eprintln!(
+            "  Writing mentedb memory instructions v{}",
+            env!("CARGO_PKG_VERSION")
+        );
         let content = format!("{version_marker}\n{AGENT_INSTRUCTIONS}");
         write_if_missing(path, &content, "agent instructions")?;
     }
@@ -507,5 +584,300 @@ fn setup_cursor(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     append_instructions(&cursor_dir.join("rules/mentedb.md"), true, force)?;
 
     println!("\nDone! Restart Cursor to activate MenteDB memory.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Login / Logout / Status
+// ---------------------------------------------------------------------------
+
+/// Returns (mcp_config_path, instruction_path_or_none) for a given client.
+fn client_paths(
+    client: &SetupClient,
+    home: &str,
+) -> (std::path::PathBuf, Option<std::path::PathBuf>) {
+    match client {
+        SetupClient::Copilot => {
+            let dir = std::path::PathBuf::from(home).join(".copilot");
+            (
+                dir.join("mcp-config.json"),
+                Some(dir.join("copilot-instructions.md")),
+            )
+        }
+        SetupClient::Claude => {
+            let dir = std::path::PathBuf::from(home).join("Library/Application Support/Claude");
+            (dir.join("claude_desktop_config.json"), None)
+        }
+        SetupClient::Cursor => {
+            let dir = std::path::PathBuf::from(home).join(".cursor");
+            (dir.join("mcp.json"), Some(dir.join("rules/mentedb.md")))
+        }
+    }
+}
+
+fn client_label(client: &SetupClient) -> &'static str {
+    match client {
+        SetupClient::Copilot => "copilot",
+        SetupClient::Claude => "claude",
+        SetupClient::Cursor => "cursor",
+    }
+}
+
+/// Callback payload sent by the browser after authentication.
+#[derive(serde::Deserialize)]
+struct AuthCallback {
+    api_key: String,
+    user_id: String,
+}
+
+async fn run_login(client: SetupClient) -> anyhow::Result<()> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let (mcp_config_path, instructions_path) = client_paths(&client, &home);
+    let label = client_label(&client);
+
+    // 1. Start a temporary local HTTP server on a random port
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+
+    let url = format!("https://app.mentedb.com/auth/device?callback_port={port}&client={label}");
+
+    println!("Opening browser for login... If it doesn't open, visit:");
+    println!("  {url}");
+
+    // Try to open the browser (best effort)
+    let _ = webbrowser::open(&url);
+
+    // 2. Wait for the callback (5 minute timeout)
+    let creds = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        wait_for_callback(listener),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Login timed out after 5 minutes"))??;
+
+    // 3. Save credentials
+    let credentials = Credentials {
+        api_key: creds.api_key.clone(),
+        user_id: creds.user_id.clone(),
+        endpoint: Credentials::cloud_endpoint().to_string(),
+    };
+    credentials.save()?;
+    let cred_path = Credentials::path()?;
+    eprintln!("Updating credentials: {}", cred_path.display());
+    eprintln!("  Saved API key and user ID (permissions 0600)");
+
+    // 4. Update MCP config to cloud mode
+    merge_mcp_config_cloud(&mcp_config_path, &creds.api_key)?;
+
+    // 5. Update instructions
+    let mut modified_files: Vec<(String, String)> = vec![
+        (
+            "~/.mentedb/credentials.json".to_string(),
+            "API key saved".to_string(),
+        ),
+        (
+            mcp_config_path.display().to_string(),
+            "MCP endpoint -> cloud".to_string(),
+        ),
+    ];
+
+    if let Some(instr_path) = &instructions_path {
+        append_instructions(instr_path, false, true)?;
+        modified_files.push((
+            instr_path.display().to_string(),
+            format!("memory instructions v{}", env!("CARGO_PKG_VERSION")),
+        ));
+    }
+
+    // 6. Print summary
+    println!("\nLogin successful!\n");
+    println!("Files modified:");
+    for (path, desc) in &modified_files {
+        println!("  {path}  ({desc})");
+    }
+    println!();
+    println!(
+        "Your memory is now cloud-synced at {}",
+        Credentials::cloud_endpoint()
+    );
+    println!("Data is encrypted and isolated to your account.");
+
+    Ok(())
+}
+
+/// Wait for the auth callback POST on the local server.
+async fn wait_for_callback(listener: tokio::net::TcpListener) -> anyhow::Result<AuthCallback> {
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Incoming;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::{Method, Request, Response, StatusCode};
+    use hyper_util::rt::TokioIo;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<AuthCallback>();
+    let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
+
+    // Accept exactly one connection
+    let (stream, _) = listener.accept().await?;
+    let io = TokioIo::new(stream);
+
+    let tx_clone = tx.clone();
+    let service = service_fn(move |req: Request<Incoming>| {
+        let tx = tx_clone.clone();
+        async move {
+            if req.method() == Method::POST && req.uri().path() == "/callback" {
+                let body = req.collect().await?.to_bytes();
+                match serde_json::from_slice::<AuthCallback>(&body) {
+                    Ok(cb) => {
+                        if let Some(sender) = tx.lock().await.take() {
+                            let _ = sender.send(cb);
+                        }
+                        let resp = Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "text/plain")
+                            .header("Access-Control-Allow-Origin", "*")
+                            .body(Full::new(Bytes::from(
+                                "Login successful! You can close this tab.",
+                            )))?;
+                        Ok::<_, anyhow::Error>(resp)
+                    }
+                    Err(e) => {
+                        let resp = Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Full::new(Bytes::from(format!("Invalid payload: {e}"))))?;
+                        Ok(resp)
+                    }
+                }
+            } else if req.method() == Method::OPTIONS {
+                // CORS preflight
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                    .header("Access-Control-Allow-Headers", "Content-Type")
+                    .body(Full::new(Bytes::new()))?;
+                Ok(resp)
+            } else {
+                let resp = Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::from("Not found")))?;
+                Ok(resp)
+            }
+        }
+    });
+
+    // Serve the single connection in the background
+    tokio::spawn(async move {
+        if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+            eprintln!("HTTP server error: {e}");
+        }
+    });
+
+    // Wait for the callback
+    let result = rx
+        .await
+        .map_err(|_| anyhow::anyhow!("Callback channel closed without receiving credentials"))?;
+    Ok(result)
+}
+
+fn run_logout(client: SetupClient) -> anyhow::Result<()> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let binary = which_mentedb_mcp();
+    let (mcp_config_path, instructions_path) = client_paths(&client, &home);
+
+    let mut modified: Vec<(String, String)> = Vec::new();
+
+    // 1. Remove credentials
+    let cred_path = Credentials::path()?;
+    if Credentials::remove()? {
+        eprintln!("Removing credentials: {}", cred_path.display());
+        modified.push((
+            "~/.mentedb/credentials.json".to_string(),
+            "removed".to_string(),
+        ));
+    } else {
+        eprintln!("No credentials file found, skipping.");
+    }
+
+    // 2. Revert MCP config to local stdio mode
+    merge_mcp_config(&mcp_config_path, &binary, true)?;
+    modified.push((
+        mcp_config_path.display().to_string(),
+        "MCP endpoint -> local stdio".to_string(),
+    ));
+
+    // 3. Update instructions (same as update does)
+    if let Some(instr_path) = &instructions_path {
+        append_instructions(instr_path, false, true)?;
+        modified.push((
+            instr_path.display().to_string(),
+            format!("memory instructions v{}", env!("CARGO_PKG_VERSION")),
+        ));
+    }
+
+    println!("\nLogout complete.\n");
+    println!("Files modified:");
+    for (path, desc) in &modified {
+        println!("  {path}  ({desc})");
+    }
+    println!();
+    println!(
+        "MenteDB is now in local mode. Your local memories in ~/.mentedb are still available."
+    );
+
+    Ok(())
+}
+
+async fn run_status() -> anyhow::Result<()> {
+    println!("MenteDB Memory Status");
+
+    match Credentials::load()? {
+        Some(creds) => {
+            println!("  Mode: cloud ({})", creds.endpoint);
+
+            // Try to fetch user info from the API
+            let client = reqwest::Client::new();
+            match client
+                .get(format!("{}/api/me", creds.endpoint))
+                .header("Authorization", format!("Bearer {}", creds.api_key))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if let Some(email) = body.get("email").and_then(|v| v.as_str()) {
+                            println!("  User: {email}");
+                        } else {
+                            println!("  User: {}", creds.user_id);
+                        }
+                        if let Some(plan) = body.get("plan").and_then(|v| v.as_str()) {
+                            println!("  Plan: {plan}");
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    println!("  User: {} (API returned {})", creds.user_id, resp.status());
+                }
+                Err(e) => {
+                    println!("  User: {} (could not reach API: {e})", creds.user_id);
+                }
+            }
+        }
+        None => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+            let data_dir = std::path::PathBuf::from(&home).join(".mentedb");
+            println!("  Mode: local (~/.mentedb)");
+
+            // Try to open the DB and count memories
+            let db_path = data_dir.join("mentedb");
+            if db_path.exists() {
+                println!("  Database: present");
+            } else {
+                println!("  Database: not initialized");
+            }
+        }
+    }
+
     Ok(())
 }

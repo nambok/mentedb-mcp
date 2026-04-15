@@ -74,6 +74,10 @@ pub struct SearchMemoriesRequest {
         description = "Optional memory type filter: episodic, semantic, procedural, anti_pattern, reasoning, correction"
     )]
     pub memory_type: Option<String>,
+    #[schemars(
+        description = "Optional project or workspace identifier to scope results (e.g. repo name). Returns global + project memories only."
+    )]
+    pub project_context: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -614,11 +618,36 @@ async fn full_context_scan(
     req: &ProcessTurnRequest,
     delta_tracker: &Mutex<DeltaTracker>,
 ) -> (Vec<serde_json::Value>, Vec<MemoryId>) {
-    let mut scored: Vec<(f32, &ScoredMemory)> = all
+    // Scope filtering: only include memories that match the current project or are global
+    let project_scope_tag = req
+        .project_context
+        .as_ref()
+        .map(|ctx| format!("scope:project:{}", ctx));
+    let scoped: Vec<&ScoredMemory> = all
+        .iter()
+        .filter(|sm| {
+            let tags = &sm.memory.tags;
+            let has_scope = tags.iter().any(|t| t.starts_with("scope:"));
+            if !has_scope {
+                return true; // legacy memories without scope tags are always included
+            }
+            if tags.iter().any(|t| t == "scope:global") {
+                return true;
+            }
+            if let Some(ref ps) = project_scope_tag
+                && tags.iter().any(|t| t == ps)
+            {
+                return true;
+            }
+            false
+        })
+        .collect();
+
+    let mut scored: Vec<(f32, &ScoredMemory)> = scoped
         .iter()
         .map(|sm| {
             let sim = cosine_similarity(query_embedding, &sm.memory.embedding);
-            (sim, sm)
+            (sim, *sm)
         })
         .filter(|(sim, _)| *sim > 0.3)
         .collect();
@@ -857,8 +886,13 @@ impl MenteDbServer {
         };
 
         let mut db = self.db.lock().await;
-        // Fetch extra candidates when filtering by type since some will be excluded
-        let fetch_k = if type_filter.is_some() { k * 3 } else { k };
+        // Fetch extra candidates when filtering by type or scope since some will be excluded
+        let has_filters = type_filter.is_some() || req.project_context.is_some();
+        let fetch_k = if has_filters { k * 3 } else { k };
+        let project_scope_tag = req
+            .project_context
+            .as_ref()
+            .map(|ctx| format!("scope:project:{}", ctx));
         match db.recall_similar(&embedding, fetch_k) {
             Ok(results) => {
                 tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
@@ -875,6 +909,17 @@ impl MenteDbServer {
                             && mem.memory.memory_type != *tf
                         {
                             continue;
+                        }
+                        // Scope filtering: skip memories from other projects
+                        if let Some(ref ps) = project_scope_tag {
+                            let tags = &mem.memory.tags;
+                            let has_scope = tags.iter().any(|t| t.starts_with("scope:"));
+                            if has_scope
+                                && !tags.iter().any(|t| t == "scope:global")
+                                && !tags.iter().any(|t| t == ps)
+                            {
+                                continue;
+                            }
                         }
                         let boosted_score = if mem.memory.memory_type == MemoryType::AntiPattern {
                             score * 1.5

@@ -201,6 +201,7 @@ Call `process_turn` BEFORE responding, on EVERY turn. Pass `user_message` and `a
 - It stores the conversation, searches past context, runs inference, and detects contradictions.
 - Without this call, nothing is remembered.
 - Increment `turn_id` each turn (start at 0).
+- Pass `project_context` with the current repo or project name to scope memories to that project.
 
 ## USE the returned context
 
@@ -224,6 +225,7 @@ Don't store chitchat. Store facts, preferences, decisions, corrections.
 
 Pass a text query to search by similarity, or a memory UUID to get full content.
 Use proactively — if the user mentions a project, search for what you know about it.
+Pass `project_context` to scope results to global + that project's memories only.
 
 ## forget_memory — Delete memories
 

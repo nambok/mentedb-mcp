@@ -727,9 +727,12 @@ impl MenteDbServer {
         };
         let mut node = MemoryNode::new(AgentId(agent_id), memory_type, req.content, embedding);
 
-        if let Some(tags) = req.tags {
-            node.tags = tags;
+        let mut tags = req.tags.unwrap_or_default();
+        // Auto-add scope tags based on content analysis
+        if !tags.iter().any(|t| t.starts_with("scope:")) {
+            tags.push("scope:global".to_string());
         }
+        node.tags = tags;
 
         if let Some(metadata) = req.metadata {
             for (k, v) in metadata {
@@ -852,9 +855,14 @@ impl MenteDbServer {
                         {
                             continue;
                         }
+                        let boosted_score = if mem.memory.memory_type == MemoryType::AntiPattern {
+                            score * 1.5
+                        } else {
+                            *score
+                        };
                         items.push(json!({
                             "id": id.to_string(),
-                            "score": score,
+                            "score": boosted_score,
                             "content": mem.memory.content,
                             "memory_type": format!("{:?}", mem.memory.memory_type),
                             "tags": mem.memory.tags,
@@ -866,10 +874,14 @@ impl MenteDbServer {
                         }
                         items.push(json!({ "id": id.to_string(), "score": score }));
                     }
-                    if items.len() >= k {
-                        break;
-                    }
                 }
+                // Re-sort by score so boosted anti-patterns bubble up, then truncate
+                items.sort_by(|a, b| {
+                    let sa = a["score"].as_f64().unwrap_or(0.0);
+                    let sb = b["score"].as_f64().unwrap_or(0.0);
+                    sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                items.truncate(k);
                 Ok(CallToolResult::success(vec![Content::text(
                     json!({ "results": items, "count": items.len() }).to_string(),
                 )]))
@@ -1901,7 +1913,7 @@ impl MenteDbServer {
         );
         node.tags = vec!["conversation-turn".to_string()];
         if let Some(ctx) = &req.project_context {
-            node.tags.push(ctx.clone());
+            node.tags.push(format!("scope:project:{}", ctx));
         }
         let id = node.id;
         match db.store(node) {
@@ -2188,6 +2200,201 @@ impl MenteDbServer {
         // Drop db lock before auto-maintenance to prevent deadlock
         drop(db);
 
+        // Action detection: identify significant actions for proactive memory
+        let mut detected_actions: Vec<serde_json::Value> = Vec::new();
+        let mut proactive_recalls: Vec<serde_json::Value> = Vec::new();
+        let combined_text =
+            format!("{} {}", req.user_message, req.assistant_response).to_lowercase();
+
+        // Detect git operations
+        if combined_text.contains("git commit")
+            || combined_text.contains("git push")
+            || combined_text.contains("merged")
+            || combined_text.contains("pull request")
+            || combined_text.contains("git revert")
+        {
+            detected_actions
+                .push(json!({"type": "git_operation", "detail": "version control activity"}));
+        }
+        // Detect decisions
+        if combined_text.contains("decided to")
+            || combined_text.contains("going with")
+            || combined_text.contains("let's use")
+            || combined_text.contains("switching to")
+            || combined_text.contains("we'll go with")
+            || combined_text.contains("chosen")
+            || combined_text.contains("the plan is")
+        {
+            detected_actions
+                .push(json!({"type": "decision", "detail": "architecture or technology decision"}));
+        }
+        // Detect errors/debugging
+        if combined_text.contains("error:")
+            || combined_text.contains("failed")
+            || combined_text.contains("bug")
+            || combined_text.contains("crash")
+            || combined_text.contains("fix")
+            || combined_text.contains("stacktrace")
+            || combined_text.contains("traceback")
+            || combined_text.contains("exception")
+        {
+            detected_actions
+                .push(json!({"type": "error_resolution", "detail": "debugging or error handling"}));
+        }
+        // Detect deployments
+        if combined_text.contains("deploy")
+            || combined_text.contains("release")
+            || combined_text.contains("production")
+            || combined_text.contains("staging")
+            || combined_text.contains("rollback")
+        {
+            detected_actions
+                .push(json!({"type": "deployment", "detail": "deployment or release activity"}));
+        }
+
+        // For detected actions, do proactive recall of related memories
+        if !detected_actions.is_empty() {
+            let mut db_lock = self.db.lock().await;
+            let all_mems = recall_all_memories(&mut db_lock);
+            drop(db_lock);
+
+            for action in &detected_actions {
+                let action_type = action["type"].as_str().unwrap_or("");
+                let search_query = match action_type {
+                    "git_operation" => "past commits, code changes, review feedback",
+                    "decision" => "previous decisions, architecture choices, technology selections",
+                    "error_resolution" => "past errors, bugs, debugging, fixes, resolutions",
+                    "deployment" => "deployment issues, rollback procedures, release notes",
+                    _ => continue,
+                };
+                if let Ok(action_emb) = self.embedding_provider.embed(search_query) {
+                    let mut scored: Vec<(f32, &ScoredMemory)> = all_mems
+                        .iter()
+                        .map(|sm| (cosine_similarity(&action_emb, &sm.memory.embedding), sm))
+                        .filter(|(sim, _)| *sim > 0.4)
+                        .collect();
+                    scored
+                        .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    let top: Vec<serde_json::Value> = scored.iter().take(3)
+                        .map(|(score, sm)| {
+                            let content = &sm.memory.content;
+                            let truncated = if content.len() > 200 {
+                                format!("{}...", &content[..content.floor_char_boundary(200)])
+                            } else {
+                                content.clone()
+                            };
+                            json!({"id": sm.memory.id.to_string(), "score": score, "summary": truncated})
+                        })
+                        .collect();
+                    if !top.is_empty() {
+                        proactive_recalls.push(json!({
+                            "trigger": action_type,
+                            "reason": format!("Related memories for {}", action_type.replace('_', " ")),
+                            "memories": top,
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Auto-detect corrections that might indicate anti-patterns
+        let correction_indicators = [
+            "no, don't",
+            "don't do that",
+            "i told you",
+            "that's wrong",
+            "stop doing",
+            "never do",
+            "please don't",
+            "not like that",
+            "that's not right",
+            "incorrect",
+            "wrong approach",
+        ];
+        let user_lower = req.user_message.to_lowercase();
+        let is_correction = correction_indicators.iter().any(|c| user_lower.contains(c));
+
+        if is_correction {
+            // Store as an anti-pattern memory
+            let anti_pattern_content = format!(
+                "AVOID: {} (User correction: {})",
+                req.assistant_response.chars().take(200).collect::<String>(),
+                req.user_message.chars().take(200).collect::<String>(),
+            );
+            let ap_embedding = self
+                .embedding_provider
+                .embed(&anti_pattern_content)
+                .unwrap_or_default();
+            let mut ap_node = MemoryNode::new(
+                AgentId(agent_id),
+                MemoryType::AntiPattern,
+                anti_pattern_content,
+                ap_embedding,
+            );
+            ap_node.tags = vec!["auto-correction".to_string()];
+            if let Some(ctx) = &req.project_context {
+                ap_node.tags.push(format!("scope:project:{}", ctx));
+            }
+            let ap_id = ap_node.id;
+            let mut db = self.db.lock().await;
+            if let Ok(()) = db.store(ap_node) {
+                stored_ids.push(ap_id.to_string());
+                tracing::info!(
+                    turn_id = req.turn_id,
+                    "auto-detected correction, stored anti-pattern"
+                );
+            }
+            drop(db);
+        }
+
+        // Emotional trajectory: detect user sentiment
+        let sentiment_score: f32 = {
+            let frustration_signals = [
+                "not working",
+                "broken",
+                "frustrated",
+                "annoyed",
+                "why isn't",
+                "still not",
+                "keeps failing",
+                "doesn't work",
+                "can't believe",
+                "waste of time",
+                "terrible",
+                "horrible",
+                "awful",
+            ];
+            let satisfaction_signals = [
+                "thanks",
+                "perfect",
+                "great",
+                "awesome",
+                "exactly",
+                "well done",
+                "nice",
+                "excellent",
+                "love it",
+                "works great",
+                "amazing",
+                "brilliant",
+                "fantastic",
+            ];
+            let frustration_count = frustration_signals
+                .iter()
+                .filter(|s| user_lower.contains(*s))
+                .count() as f32;
+            let satisfaction_count = satisfaction_signals
+                .iter()
+                .filter(|s| user_lower.contains(*s))
+                .count() as f32;
+
+            if frustration_count > 0.0 || satisfaction_count > 0.0 {
+                (satisfaction_count - frustration_count) / (satisfaction_count + frustration_count)
+            } else {
+                0.0 // neutral
+            }
+        };
+
         // 4c. Detect phantom entities in the conversation
         let mut phantom_tracker = self.phantom_tracker.lock().await;
         let known: Vec<String> = context_items
@@ -2272,6 +2479,52 @@ impl MenteDbServer {
         tracker.record_turn(node);
         let predictions: Vec<String> = tracker.predict_next_topics().into_iter().collect();
         drop(tracker);
+
+        // Ghost memory inference: detect patterns that suggest unconfirmed beliefs
+        let speculation_indicators = [
+            "might be",
+            "probably",
+            "seems like",
+            "i think",
+            "looks like",
+            "considering",
+            "planning to",
+            "thinking about",
+            "maybe",
+        ];
+        let has_speculation = speculation_indicators
+            .iter()
+            .any(|s| combined_text.contains(s));
+
+        if has_speculation && !detected_actions.is_empty() {
+            // Create a low-confidence ghost memory from the speculative content
+            let ghost_content = format!(
+                "Unconfirmed: {}",
+                req.user_message.chars().take(300).collect::<String>()
+            );
+            let ghost_emb = self
+                .embedding_provider
+                .embed(&ghost_content)
+                .unwrap_or_default();
+            let mut ghost_node = MemoryNode::new(
+                AgentId(agent_id),
+                MemoryType::Semantic,
+                ghost_content,
+                ghost_emb,
+            );
+            ghost_node.confidence = 0.3; // Low confidence
+            ghost_node.tags = vec!["ghost-memory".to_string(), "unconfirmed".to_string()];
+            if let Some(ctx) = &req.project_context {
+                ghost_node.tags.push(format!("scope:project:{}", ctx));
+            }
+            let mut db = self.db.lock().await;
+            let _ = db.store(ghost_node);
+            drop(db);
+            tracing::debug!(
+                turn_id = req.turn_id,
+                "stored ghost memory from speculative content"
+            );
+        }
 
         // 6. Pre-assemble speculative cache for predicted topics
         if !predictions.is_empty() {
@@ -2461,6 +2714,9 @@ impl MenteDbServer {
             "phantoms": phantom_count,
             "predictions": predictions,
             "cache_hit": cache_hit,
+            "detected_actions": detected_actions,
+            "proactive_recalls": proactive_recalls,
+            "sentiment": sentiment_score,
         })
         .to_string();
 

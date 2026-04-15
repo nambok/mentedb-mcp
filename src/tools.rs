@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use mentedb::MenteDb;
@@ -329,6 +330,14 @@ pub struct PropagateBeliefRequest {
     pub new_confidence: f32,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMemoryHistoryRequest {
+    #[schemars(
+        description = "UUID of the memory to trace version history for via Supersedes edges"
+    )]
+    pub memory_id: String,
+}
+
 /// Parse a decision state string into a DecisionState enum.
 fn parse_decision_state(s: &str) -> DecisionState {
     let lower = s.to_lowercase();
@@ -360,6 +369,10 @@ pub struct MenteDbServer {
     /// LLM-powered cognitive service for contradiction verification,
     /// entity resolution, and topic canonicalization.
     cognitive_llm: Option<Arc<CognitiveLlmService<ExtractionLlmJudge>>>,
+    /// Sentiment history for multi-turn emotional trajectory tracking.
+    sentiment_history: Arc<Mutex<Vec<f32>>>,
+    /// Rolling action history for transition probability predictions.
+    action_history: Arc<Mutex<VecDeque<String>>>,
     #[allow(dead_code)]
     config: ServerConfig,
     #[allow(dead_code)]
@@ -489,6 +502,8 @@ impl MenteDbServer {
             speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5, 0.6))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             cognitive_llm,
+            sentiment_history: Arc::new(Mutex::new(Vec::new())),
+            action_history: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
             config,
             tool_router,
         }
@@ -847,7 +862,13 @@ impl MenteDbServer {
         match db.recall_similar(&embedding, fetch_k) {
             Ok(results) => {
                 tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
+                let now_us = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+                let one_day_us: u64 = 24 * 3600 * 1_000_000;
                 let mut items: Vec<serde_json::Value> = Vec::new();
+                let mut ids_to_touch: Vec<MemoryId> = Vec::new();
                 for (id, score) in &results {
                     if let Ok(Some(mem)) = find_memory_by_id(&mut db, id.0) {
                         if let Some(ref tf) = type_filter
@@ -860,9 +881,19 @@ impl MenteDbServer {
                         } else {
                             *score
                         };
+                        // Ebbinghaus access-weighted decay boost
+                        let access_boost = 1.0 + (mem.memory.access_count as f32 * 0.05).min(0.5);
+                        let recency_boost =
+                            if now_us.saturating_sub(mem.memory.accessed_at) < one_day_us {
+                                1.1
+                            } else {
+                                1.0
+                            };
+                        let final_score = boosted_score * access_boost * recency_boost;
+                        ids_to_touch.push(*id);
                         items.push(json!({
                             "id": id.to_string(),
-                            "score": boosted_score,
+                            "score": final_score,
                             "content": mem.memory.content,
                             "memory_type": format!("{:?}", mem.memory.memory_type),
                             "tags": mem.memory.tags,
@@ -873,6 +904,14 @@ impl MenteDbServer {
                             continue;
                         }
                         items.push(json!({ "id": id.to_string(), "score": score }));
+                    }
+                }
+                // Update access tracking on recalled memories
+                for mid in &ids_to_touch {
+                    if let Ok(mut mem_node) = db.get_memory(*mid) {
+                        mem_node.accessed_at = now_us;
+                        mem_node.access_count += 1;
+                        let _ = db.store(mem_node);
                     }
                 }
                 // Re-sort by score so boosted anti-patterns bubble up, then truncate
@@ -1816,7 +1855,7 @@ impl MenteDbServer {
             .collect();
 
         // On cache hit, use cached memory IDs for a targeted lookup instead of
-        let (context_items, _current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result
+        let (context_items, current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result
         {
             let cached_id_set: std::collections::HashSet<MemoryId> =
                 cached_ids.iter().cloned().collect();
@@ -1873,6 +1912,37 @@ impl MenteDbServer {
             "cache_hit": cache_hit,
         });
 
+        // Access tracking on recalled memories: update accessed_at and access_count
+        for mid in &current_ids {
+            if let Ok(mut mem_node) = db.get_memory(*mid) {
+                mem_node.accessed_at = now_ts;
+                mem_node.access_count += 1;
+                let _ = db.store(mem_node);
+            }
+        }
+
+        // Session start auto-loading: on first turns, include top salience memories
+        let session_context: Vec<serde_json::Value> = if req.turn_id <= 1 {
+            let mut all_by_salience: Vec<&ScoredMemory> = all.iter().collect();
+            all_by_salience.sort_by(|a, b| {
+                b.memory
+                    .salience
+                    .partial_cmp(&a.memory.salience)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all_by_salience
+                .iter()
+                .take(10)
+                .map(|sm| {
+                    let mut val = memory_node_to_json(&sm.memory);
+                    val["source"] = json!("session_start");
+                    val
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         // 2. Check pain signals
         let pain_registry = self.pain_registry.lock().await;
         let context_words: Vec<String> = req
@@ -1915,7 +1985,8 @@ impl MenteDbServer {
         if let Some(ctx) = &req.project_context {
             node.tags.push(format!("scope:project:{}", ctx));
         }
-        let id = node.id;
+        let episodic_id = node.id;
+        let id = episodic_id;
         match db.store(node) {
             Ok(()) => {
                 stored_ids.push(id.to_string());
@@ -2311,38 +2382,126 @@ impl MenteDbServer {
             "incorrect",
             "wrong approach",
         ];
+        // Failed approach detection: additional indicators
+        let failed_approach_indicators = [
+            "tried",
+            "didn't work",
+            "that broke",
+            "had to revert",
+            "rolled back",
+            "doesn't work because",
+        ];
         let user_lower = req.user_message.to_lowercase();
         let is_correction = correction_indicators.iter().any(|c| user_lower.contains(c));
+        let is_failed_approach = failed_approach_indicators
+            .iter()
+            .any(|c| user_lower.contains(c))
+            && (user_lower.contains(" but") || user_lower.contains("doesn't work"));
 
-        if is_correction {
-            // Store as an anti-pattern memory
-            let anti_pattern_content = format!(
-                "AVOID: {} (User correction: {})",
-                req.assistant_response.chars().take(200).collect::<String>(),
-                req.user_message.chars().take(200).collect::<String>(),
-            );
+        if is_correction || is_failed_approach {
+            let anti_pattern_content = if is_failed_approach {
+                format!(
+                    "FAILED APPROACH: {} (Context: {})",
+                    req.user_message.chars().take(200).collect::<String>(),
+                    req.assistant_response.chars().take(200).collect::<String>(),
+                )
+            } else {
+                format!(
+                    "AVOID: {} (User correction: {})",
+                    req.assistant_response.chars().take(200).collect::<String>(),
+                    req.user_message.chars().take(200).collect::<String>(),
+                )
+            };
             let ap_embedding = self
                 .embedding_provider
                 .embed(&anti_pattern_content)
                 .unwrap_or_default();
-            let mut ap_node = MemoryNode::new(
-                AgentId(agent_id),
-                MemoryType::AntiPattern,
-                anti_pattern_content,
-                ap_embedding,
-            );
-            ap_node.tags = vec!["auto-correction".to_string()];
-            if let Some(ctx) = &req.project_context {
-                ap_node.tags.push(format!("scope:project:{}", ctx));
-            }
-            let ap_id = ap_node.id;
+
+            // Repeated correction tracking: search for existing similar anti-patterns
             let mut db = self.db.lock().await;
-            if let Ok(()) = db.store(ap_node) {
-                stored_ids.push(ap_id.to_string());
-                tracing::info!(
-                    turn_id = req.turn_id,
-                    "auto-detected correction, stored anti-pattern"
+            let existing_aps = recall_all_memories(&mut db);
+            let mut found_existing = false;
+            for sm in &existing_aps {
+                if sm.memory.memory_type != MemoryType::AntiPattern {
+                    continue;
+                }
+                if !sm.memory.tags.contains(&"auto-correction".to_string())
+                    && !sm.memory.tags.contains(&"failed-approach".to_string())
+                {
+                    continue;
+                }
+                let sim = cosine_similarity(&ap_embedding, &sm.memory.embedding);
+                if sim > 0.75 {
+                    // Similar anti-pattern exists, strengthen it
+                    let mut updated = sm.memory.clone();
+                    let current_count: u32 = updated
+                        .attributes
+                        .get("correction_count")
+                        .and_then(|v| match v {
+                            AttributeValue::Integer(i) => Some(*i as u32),
+                            _ => None,
+                        })
+                        .unwrap_or(1);
+                    let new_count = current_count + 1;
+                    updated.attributes.insert(
+                        "correction_count".to_string(),
+                        AttributeValue::Integer(new_count as i64),
+                    );
+                    updated.confidence = (updated.confidence + 0.1).min(1.0);
+                    let _ = db.store(updated);
+                    found_existing = true;
+                    tracing::info!(
+                        turn_id = req.turn_id,
+                        correction_count = new_count,
+                        "strengthened existing anti-pattern"
+                    );
+                    break;
+                }
+            }
+
+            if !found_existing {
+                let mut ap_node = MemoryNode::new(
+                    AgentId(agent_id),
+                    MemoryType::AntiPattern,
+                    anti_pattern_content,
+                    ap_embedding,
                 );
+                let base_tag = if is_failed_approach {
+                    "failed-approach"
+                } else {
+                    "auto-correction"
+                };
+                ap_node.tags = vec![base_tag.to_string()];
+                if let Some(ctx) = &req.project_context {
+                    ap_node.tags.push(format!("scope:project:{}", ctx));
+                }
+                ap_node
+                    .attributes
+                    .insert("correction_count".to_string(), AttributeValue::Integer(1));
+                let ap_id = ap_node.id;
+                if let Ok(()) = db.store(ap_node) {
+                    stored_ids.push(ap_id.to_string());
+                    // Anti-pattern-to-source edge: link to the episodic memory from this turn
+                    let now_edge = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as u64;
+                    let edge = MemoryEdge {
+                        source: ap_id,
+                        target: episodic_id,
+                        edge_type: EdgeType::Related,
+                        weight: 0.8,
+                        created_at: now_edge,
+                        valid_from: None,
+                        valid_until: None,
+                    };
+                    let _ = db.relate(edge);
+                    tracing::info!(
+                        turn_id = req.turn_id,
+                        tag = base_tag,
+                        "auto-detected correction, stored anti-pattern with source edge"
+                    );
+                }
             }
             drop(db);
         }
@@ -2394,6 +2553,144 @@ impl MenteDbServer {
                 0.0 // neutral
             }
         };
+
+        // Multi-turn emotional trajectory: push sentiment and compute trend
+        let mut sent_hist = self.sentiment_history.lock().await;
+        sent_hist.push(sentiment_score);
+        let sentiment_rolling_avg = if sent_hist.len() >= 2 {
+            let window: Vec<f32> = sent_hist.iter().rev().take(5).copied().collect();
+            window.iter().sum::<f32>() / window.len() as f32
+        } else {
+            sentiment_score
+        };
+        let emotional_trend = if sent_hist.len() < 3 {
+            "stable".to_string()
+        } else {
+            let window: Vec<f32> = sent_hist.iter().rev().take(5).copied().collect();
+            let diffs: Vec<f32> = window.windows(2).map(|w| w[0] - w[1]).collect();
+            let avg_diff = if diffs.is_empty() {
+                0.0
+            } else {
+                diffs.iter().sum::<f32>() / diffs.len() as f32
+            };
+            let variance = if diffs.is_empty() {
+                0.0
+            } else {
+                diffs.iter().map(|d| (d - avg_diff).powi(2)).sum::<f32>() / diffs.len() as f32
+            };
+            if variance > 0.3 {
+                "volatile".to_string()
+            } else if avg_diff > 0.1 {
+                "improving".to_string()
+            } else if avg_diff < -0.1 {
+                "degrading".to_string()
+            } else {
+                "stable".to_string()
+            }
+        };
+        drop(sent_hist);
+
+        // Confidence feedback loop: adjust confidence of served context based on sentiment
+        if sentiment_score.abs() > 0.5 {
+            let mut db = self.db.lock().await;
+            for mid in &current_ids {
+                if let Ok(mut mem_node) = db.get_memory(*mid) {
+                    if sentiment_score < -0.5 {
+                        mem_node.confidence = (mem_node.confidence - 0.05).max(0.1);
+                    } else if sentiment_score > 0.5 {
+                        mem_node.confidence = (mem_node.confidence + 0.05).min(1.0);
+                    }
+                    let _ = db.store(mem_node);
+                }
+            }
+            drop(db);
+        }
+
+        // Action-sequence tracking: record actions and predict next
+        let mut action_hist = self.action_history.lock().await;
+        for action in &detected_actions {
+            if let Some(atype) = action["type"].as_str() {
+                if action_hist.len() >= 20 {
+                    action_hist.pop_front();
+                }
+                action_hist.push_back(atype.to_string());
+            }
+        }
+        let predicted_next_action: Option<String> = if let Some(last_action) = action_hist.back() {
+            // Compute transition probability from action history
+            let last = last_action.clone();
+            let mut transition_counts: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            let mut total_after = 0u32;
+            let hist_vec: Vec<String> = action_hist.iter().cloned().collect();
+            for i in 0..hist_vec.len().saturating_sub(1) {
+                if hist_vec[i] == last {
+                    *transition_counts
+                        .entry(hist_vec[i + 1].clone())
+                        .or_insert(0) += 1;
+                    total_after += 1;
+                }
+            }
+            if total_after > 0 {
+                transition_counts
+                    .into_iter()
+                    .max_by_key(|(_k, v)| *v)
+                    .and_then(|(k, v)| {
+                        if (v as f32 / total_after as f32) >= 0.6 {
+                            Some(k)
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Pre-fetch memories for predicted action if available
+        if let Some(ref predicted) = predicted_next_action {
+            let search_query = match predicted.as_str() {
+                "git_operation" => Some("past commits, code changes, review feedback"),
+                "decision" => Some("previous decisions, architecture choices"),
+                "error_resolution" => Some("past errors, bugs, debugging, fixes"),
+                "deployment" => Some("deployment issues, rollback procedures"),
+                _ => None,
+            };
+            if let Some(query) = search_query
+                && let Ok(pred_emb) = self.embedding_provider.embed(query)
+            {
+                let mut db_lock = self.db.lock().await;
+                let pred_mems = recall_all_memories(&mut db_lock);
+                drop(db_lock);
+                let embed_ref = Arc::clone(&self.embedding_provider);
+                let mut cache = self.speculative_cache.lock().await;
+                cache.pre_assemble(vec![predicted.clone()], |_topic| {
+                    let mut scored: Vec<(f32, &ScoredMemory)> = pred_mems
+                        .iter()
+                        .map(|sm| (cosine_similarity(&pred_emb, &sm.memory.embedding), sm))
+                        .filter(|(sim, _)| *sim > 0.3)
+                        .collect();
+                    scored
+                        .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    let top: Vec<&ScoredMemory> =
+                        scored.iter().take(5).map(|(_, sm)| *sm).collect();
+                    if top.is_empty() {
+                        return None;
+                    }
+                    let context_text = top
+                        .iter()
+                        .map(|sm| sm.memory.content.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n---\n");
+                    let memory_ids: Vec<MemoryId> = top.iter().map(|sm| sm.memory.id).collect();
+                    Some((context_text, memory_ids, None))
+                });
+                let _ = embed_ref;
+                drop(cache);
+            }
+        }
+        drop(action_hist);
 
         // 4c. Detect phantom entities in the conversation
         let mut phantom_tracker = self.phantom_tracker.lock().await;
@@ -2479,6 +2776,62 @@ impl MenteDbServer {
         tracker.record_turn(node);
         let predictions: Vec<String> = tracker.predict_next_topics().into_iter().collect();
         drop(tracker);
+
+        // Ghost memory promotion: confirm or contradict existing ghost memories
+        {
+            let mut db = self.db.lock().await;
+            let all_ghosts: Vec<ScoredMemory> = recall_all_memories(&mut db)
+                .into_iter()
+                .filter(|sm| sm.memory.tags.contains(&"ghost-memory".to_string()))
+                .collect();
+            if !all_ghosts.is_empty() {
+                // Check if current conversation confirms or contradicts ghost memories
+                let conv_emb = self
+                    .embedding_provider
+                    .embed(&format!("{} {}", req.user_message, req.assistant_response))
+                    .unwrap_or_default();
+                // Confirmation indicators in user message
+                let confirms = [
+                    "yes",
+                    "correct",
+                    "exactly",
+                    "confirmed",
+                    "that's right",
+                    "indeed",
+                ];
+                let contradicts_kw = ["no", "wrong", "incorrect", "not true", "actually"];
+                let user_confirms = confirms.iter().any(|c| user_lower.contains(c));
+                let user_contradicts = contradicts_kw.iter().any(|c| user_lower.contains(c));
+                for ghost in &all_ghosts {
+                    let sim = cosine_similarity(&conv_emb, &ghost.memory.embedding);
+                    if sim < 0.4 {
+                        continue;
+                    }
+                    let mut updated = ghost.memory.clone();
+                    if user_confirms && sim > 0.5 {
+                        // Promote: boost confidence, change tags
+                        updated.confidence = 0.8;
+                        updated
+                            .tags
+                            .retain(|t| t != "ghost-memory" && t != "unconfirmed");
+                        updated.tags.push("promoted-ghost".to_string());
+                        let _ = db.store(updated);
+                        tracing::info!(
+                            ghost_id = %ghost.memory.id,
+                            "promoted ghost memory to confirmed"
+                        );
+                    } else if user_contradicts && sim > 0.5 {
+                        // Contradicted: archive/delete the ghost memory
+                        let _ = db.forget(ghost.memory.id);
+                        tracing::info!(
+                            ghost_id = %ghost.memory.id,
+                            "deleted contradicted ghost memory"
+                        );
+                    }
+                }
+            }
+            drop(db);
+        }
 
         // Ghost memory inference: detect patterns that suggest unconfirmed beliefs
         let speculation_indicators = [
@@ -2668,6 +3021,228 @@ impl MenteDbServer {
             drop(db);
         }
 
+        // Every 150 turns: episodic-to-semantic metabolism
+        if turn > 0 && turn % 150 == 0 {
+            let seven_days_us: u64 = 7 * 24 * 3600 * 1_000_000;
+            let now_meta = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64;
+            let mut db = self.db.lock().await;
+            let all_ep = recall_all_memories(&mut db);
+            let old_episodics: Vec<&ScoredMemory> = all_ep
+                .iter()
+                .filter(|sm| {
+                    sm.memory.memory_type == MemoryType::Episodic
+                        && now_meta.saturating_sub(sm.memory.created_at) > seven_days_us
+                })
+                .collect();
+
+            // Group by tag similarity: memories sharing at least one non-scope tag
+            let mut tag_groups: std::collections::HashMap<String, Vec<MemoryId>> =
+                std::collections::HashMap::new();
+            for sm in &old_episodics {
+                for tag in &sm.memory.tags {
+                    if !tag.starts_with("scope:") && tag != "conversation-turn" {
+                        tag_groups
+                            .entry(tag.clone())
+                            .or_default()
+                            .push(sm.memory.id);
+                    }
+                }
+            }
+
+            let mut metabolized = 0u32;
+            for (tag, ids) in &tag_groups {
+                if ids.len() < 3 {
+                    continue;
+                }
+                // Create a consolidated semantic summary from the group
+                let group_content: Vec<String> = ids
+                    .iter()
+                    .take(10)
+                    .filter_map(|id| db.get_memory(*id).ok())
+                    .map(|m| {
+                        if m.content.len() > 100 {
+                            format!("{}...", &m.content[..m.content.floor_char_boundary(100)])
+                        } else {
+                            m.content.clone()
+                        }
+                    })
+                    .collect();
+                let summary = format!(
+                    "Consolidated from {} episodic memories about '{}': {}",
+                    ids.len(),
+                    tag,
+                    group_content.join(" | ")
+                );
+                let sum_emb = self.embedding_provider.embed(&summary).unwrap_or_default();
+                let mut sum_node =
+                    MemoryNode::new(AgentId(Uuid::nil()), MemoryType::Semantic, summary, sum_emb);
+                sum_node.tags = vec![tag.clone(), "metabolized-summary".to_string()];
+                let _ = db.store(sum_node);
+
+                // Mark originals as metabolized
+                for mid in ids.iter().take(10) {
+                    if let Ok(mut mem) = db.get_memory(*mid)
+                        && !mem.tags.contains(&"metabolized".to_string())
+                    {
+                        mem.tags.push("metabolized".to_string());
+                        mem.salience = 0.05;
+                        let _ = db.store(mem);
+                        metabolized += 1;
+                    }
+                }
+            }
+            drop(db);
+            if metabolized > 0 {
+                maintenance.push("episodic_metabolism");
+                tracing::info!(
+                    turn_id = turn,
+                    metabolized,
+                    "auto-maintenance: episodic-to-semantic metabolism"
+                );
+            }
+        }
+
+        // Every 250 turns: adversarial self-testing of stale semantic memories
+        if turn > 0 && turn % 250 == 0 {
+            let fourteen_days_us: u64 = 14 * 24 * 3600 * 1_000_000;
+            let now_adv = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64;
+            let mut db = self.db.lock().await;
+            let all_mems = recall_all_memories(&mut db);
+            let stale_semantics: Vec<&ScoredMemory> = all_mems
+                .iter()
+                .filter(|sm| {
+                    sm.memory.memory_type == MemoryType::Semantic
+                        && sm.memory.confidence > 0.7
+                        && now_adv.saturating_sub(sm.memory.accessed_at) > fourteen_days_us
+                        && !sm.memory.tags.contains(&"stale-candidate".to_string())
+                })
+                .take(5)
+                .collect();
+
+            let recent_episodics: Vec<&ScoredMemory> = all_mems
+                .iter()
+                .filter(|sm| {
+                    sm.memory.memory_type == MemoryType::Episodic
+                        && now_adv.saturating_sub(sm.memory.created_at) < 7 * 24 * 3600 * 1_000_000
+                })
+                .collect();
+
+            let mut flagged = 0u32;
+            for stale in &stale_semantics {
+                // Check if any recent episodic is on the same topic but diverges
+                for recent in &recent_episodics {
+                    let sim = cosine_similarity(&stale.memory.embedding, &recent.memory.embedding);
+                    if sim > 0.4 && sim < 0.7 {
+                        // Same topic area but content has diverged
+                        let stale_words: std::collections::HashSet<&str> =
+                            stale.memory.content.split_whitespace().collect();
+                        let recent_words: std::collections::HashSet<&str> =
+                            recent.memory.content.split_whitespace().collect();
+                        let overlap = stale_words.intersection(&recent_words).count() as f32;
+                        let union = stale_words.union(&recent_words).count() as f32;
+                        let jaccard = if union > 0.0 { overlap / union } else { 0.0 };
+                        if jaccard < 0.3 {
+                            // Significant divergence: flag as stale
+                            if let Ok(mut mem) = db.get_memory(stale.memory.id) {
+                                mem.tags.push("stale-candidate".to_string());
+                                mem.confidence = (mem.confidence - 0.1).max(0.1);
+                                let _ = db.store(mem);
+                                flagged += 1;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            drop(db);
+            if flagged > 0 {
+                maintenance.push("adversarial_self_test");
+                tracing::info!(
+                    turn_id = turn,
+                    flagged,
+                    "auto-maintenance: adversarial self-testing flagged stale memories"
+                );
+            }
+        }
+
+        // Every 300 turns: dream consolidation (cross-cutting pattern insights)
+        if turn > 0 && turn % 300 == 0 {
+            let mut db = self.db.lock().await;
+            let all_mems = recall_all_memories(&mut db);
+
+            // Collect tag frequencies across memories, grouping by primary topic
+            let mut tag_to_topics: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for sm in &all_mems {
+                let primary_topic = sm
+                    .memory
+                    .content
+                    .split_whitespace()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                for tag in &sm.memory.tags {
+                    if !tag.starts_with("scope:")
+                        && tag != "conversation-turn"
+                        && tag != "ghost-memory"
+                        && tag != "unconfirmed"
+                        && tag != "metabolized"
+                    {
+                        tag_to_topics
+                            .entry(tag.clone())
+                            .or_default()
+                            .push(primary_topic.clone());
+                    }
+                }
+            }
+
+            let mut dream_insights = 0u32;
+            for (tag, topics) in &tag_to_topics {
+                // Deduplicate topics to count distinct clusters
+                let mut unique_topics: Vec<&String> = topics.iter().collect();
+                unique_topics.sort();
+                unique_topics.dedup();
+                if unique_topics.len() >= 3 {
+                    let insight = format!(
+                        "Cross-cutting pattern: tag '{}' appears across {} distinct topic areas: {}",
+                        tag,
+                        unique_topics.len(),
+                        unique_topics
+                            .iter()
+                            .take(5)
+                            .map(|t| t.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    let insight_emb = self.embedding_provider.embed(&insight).unwrap_or_default();
+                    let mut insight_node = MemoryNode::new(
+                        AgentId(Uuid::nil()),
+                        MemoryType::Semantic,
+                        insight,
+                        insight_emb,
+                    );
+                    insight_node.tags = vec![tag.clone(), "dream-insight".to_string()];
+                    let _ = db.store(insight_node);
+                    dream_insights += 1;
+                }
+            }
+            drop(db);
+            if dream_insights > 0 {
+                maintenance.push("dream_consolidation");
+                tracing::info!(
+                    turn_id = turn,
+                    insights = dream_insights,
+                    "auto-maintenance: dream consolidation created cross-cutting insights"
+                );
+            }
+        }
+
         let elapsed_ms = start.elapsed().as_millis();
 
         tracing::info!(
@@ -2706,6 +3281,7 @@ impl MenteDbServer {
         let response = json!({
             "ok": true,
             "context": context_summaries,
+            "session_context": session_context,
             "stored": stored_ids.len(),
             "inference_applied": inference_applied,
             "entities_resolved": entities_resolved,
@@ -2717,6 +3293,9 @@ impl MenteDbServer {
             "detected_actions": detected_actions,
             "proactive_recalls": proactive_recalls,
             "sentiment": sentiment_score,
+            "emotional_trend": emotional_trend,
+            "sentiment_rolling_avg": sentiment_rolling_avg,
+            "predicted_next_action": predicted_next_action,
         })
         .to_string();
 
@@ -2731,6 +3310,82 @@ impl MenteDbServer {
     }
 
     // -- Cognitive tools --
+
+    #[rmcp::tool(
+        description = "Walk the Supersedes edge chain backwards from a memory to get its full version history."
+    )]
+    async fn get_memory_history(
+        &self,
+        Parameters(req): Parameters<GetMemoryHistoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = match parse_uuid(&req.memory_id) {
+            Ok(id) => id,
+            Err(e) => return error_result(&e),
+        };
+
+        let mut db = self.db.lock().await;
+
+        // First, walk the Supersedes edge chain using the graph
+        let graph = db.graph();
+        let csr = graph.graph();
+        let mem_id = MemoryId(id);
+
+        if !csr.contains_node(mem_id) {
+            return error_result(&format!("Memory not found in graph: {id}"));
+        }
+
+        let mut chain: Vec<MemoryId> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut current = mem_id;
+
+        loop {
+            if !visited.insert(current) {
+                break;
+            }
+            chain.push(current);
+            let mut found_older = None;
+            for (target, edge) in csr.outgoing(current) {
+                if edge.edge_type == EdgeType::Supersedes {
+                    found_older = Some(target);
+                    break;
+                }
+            }
+            if let Some(older) = found_older {
+                current = older;
+            } else {
+                break;
+            }
+        }
+
+        // Now look up memory details for each ID in the chain
+        let mut history: Vec<serde_json::Value> = Vec::new();
+        for (idx, mid) in chain.iter().enumerate() {
+            if let Ok(mem) = db.get_memory(*mid) {
+                history.push(json!({
+                    "id": mid.to_string(),
+                    "content": mem.content,
+                    "memory_type": format!("{:?}", mem.memory_type),
+                    "created_at": mem.created_at,
+                    "confidence": mem.confidence,
+                    "version_index": idx,
+                }));
+            }
+        }
+
+        tracing::info!(
+            id = %id,
+            versions = history.len(),
+            "get_memory_history completed"
+        );
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "memory_id": id.to_string(),
+                "history": history,
+                "version_count": history.len(),
+            })
+            .to_string(),
+        )]))
+    }
 
     #[rmcp::tool(
         description = "Record a negative experience (pain signal) so MenteDB can warn when similar contexts arise."

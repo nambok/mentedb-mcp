@@ -30,19 +30,30 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let db_ref = server.db_ref();
     let db_ref_signal = db_ref.clone();
 
-    // Spawn signal handler for SIGTERM/SIGINT
+    // Spawn signal handler for graceful shutdown
     tokio::spawn(async move {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
-        let sigint = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to register SIGTERM handler");
+            let sigint = tokio::signal::ctrl_c();
 
-        tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::info!("Received SIGTERM — flushing database");
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM — flushing database");
+                }
+                _ = sigint => {
+                    tracing::info!("Received SIGINT — flushing database");
+                }
             }
-            _ = sigint => {
-                tracing::info!("Received SIGINT — flushing database");
-            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to register Ctrl+C handler");
+            tracing::info!("Received Ctrl+C — flushing database");
         }
 
         let mut db = db_ref_signal.lock().await;

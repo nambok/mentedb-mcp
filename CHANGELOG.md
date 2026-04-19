@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.11](https://github.com/nambok/mentedb-mcp/compare/v0.4.10...v0.4.11) - 2026-04-19
+
+### Fixed
+
+- include README in npm package, remove emojis
+
 ## [0.4.10](https://github.com/nambok/mentedb-mcp/compare/v0.4.9...v0.4.10) - 2026-04-19
 
 ### Fixed

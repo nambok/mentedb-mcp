@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.10](https://github.com/nambok/mentedb-mcp/compare/v0.4.9...v0.4.10) - 2026-04-19
+
+### Fixed
+
+- replace emoji with [warn] prefix for consistent CLI style
+
 ## [0.4.9](https://github.com/nambok/mentedb-mcp/compare/v0.4.8...v0.4.9) - 2026-04-19
 
 ### Fixed

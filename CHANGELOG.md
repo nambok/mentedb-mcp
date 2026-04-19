@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.6](https://github.com/nambok/mentedb-mcp/compare/v0.4.5...v0.4.6) - 2026-04-19
+
+### Fixed
+
+- update README to use npx everywhere, add login to alternative install
+
 ## [0.4.5](https://github.com/nambok/mentedb-mcp/compare/v0.4.4...v0.4.5) - 2026-04-19
 
 ### Added

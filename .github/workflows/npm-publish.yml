@@ -44,7 +44,7 @@ jobs:
 
       - name: Install musl tools (Linux x64)
         if: matrix.platform == 'linux-x64'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools perl make
 
       - name: Install protobuf compiler (Unix)
         if: runner.os != 'Windows'
@@ -61,10 +61,14 @@ jobs:
 
       - name: Build (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }} --features vendored-openssl
+
+      - name: Build (Linux x64)
+        if: matrix.platform == 'linux-x64'
+        run: cargo build --release --target ${{ matrix.target }} --features vendored-openssl
 
       - name: Build (other)
-        if: matrix.platform != 'linux-arm64'
+        if: matrix.platform != 'linux-arm64' && matrix.platform != 'linux-x64'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare binary (Unix)

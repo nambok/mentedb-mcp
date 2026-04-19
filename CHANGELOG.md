@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.7](https://github.com/nambok/mentedb-mcp/compare/v0.4.6...v0.4.7) - 2026-04-19
+
+### Added
+
+- add logout, status commands and startup token validation
+
+### Fixed
+
+- cross-platform setup and npx stale path handling
+
 ## [0.4.6](https://github.com/nambok/mentedb-mcp/compare/v0.4.5...v0.4.6) - 2026-04-19
 
 ### Fixed

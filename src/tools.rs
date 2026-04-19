@@ -200,15 +200,15 @@ pub struct ProcessTurnRequest {
     )]
     pub user_message: String,
     #[schemars(
-        description = "The assistant's response from this turn. Used for memory extraction alongside the user message."
+        description = "The assistant's response from this turn. Can be empty if calling before drafting a response."
     )]
-    pub assistant_response: String,
+    pub assistant_response: Option<String>,
     #[schemars(
         description = "Conversation turn number (monotonically increasing). Used for trajectory tracking."
     )]
     pub turn_id: u64,
     #[schemars(
-        description = "Optional project or workspace identifier for soft tagging (e.g. repo name, project path)."
+        description = "Current project or workspace name for scoping memories, e.g. 'mentedb-mcp' or 'my-app'."
     )]
     pub project_context: Option<String>,
     #[schemars(description = "Optional agent UUID. Defaults to nil UUID if not provided.")]
@@ -709,6 +709,16 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<StoreMemoryRequest>,
     ) -> Result<CallToolResult, McpError> {
+        // Cap content at 4KB to prevent context window abuse
+        const MAX_CONTENT_BYTES: usize = 4096;
+        if req.content.len() > MAX_CONTENT_BYTES {
+            return error_result(&format!(
+                "Content too large ({} bytes, max {}). Summarize before storing.",
+                req.content.len(),
+                MAX_CONTENT_BYTES
+            ));
+        }
+
         let memory_type = match parse_memory_type(&req.memory_type) {
             Ok(mt) => mt,
             Err(e) => return error_result(&e),
@@ -1772,7 +1782,7 @@ impl MenteDbServer {
     // -- Process Turn (automatic memory pipeline) --
 
     #[rmcp::tool(
-        description = "⚠️ REQUIRED — Call BEFORE every response, on EVERY turn. Without this call, nothing is remembered. Returns context from past conversations (use it!), stores the current turn, runs inference, and detects contradictions. Pass user_message and your planned assistant_response."
+        description = "Call on EVERY turn. Returns context from past conversations, stores the current turn, and detects contradictions. Pass user_message and assistant_response (assistant_response can be empty)."
     )]
     async fn process_turn(
         &self,
@@ -1895,10 +1905,8 @@ impl MenteDbServer {
 
         // 3. Store conversation turn as episodic memory (searchable context)
         // Structured extraction is handled by the LLM calling store_memory directly.
-        let conversation = format!(
-            "User: {}\nAssistant: {}",
-            req.user_message, req.assistant_response
-        );
+        let assistant_resp = req.assistant_response.as_deref().unwrap_or("");
+        let conversation = format!("User: {}\nAssistant: {}", req.user_message, assistant_resp);
 
         let mut stored_ids = Vec::new();
         let embedding = self
@@ -2203,8 +2211,7 @@ impl MenteDbServer {
         // Action detection: identify significant actions for proactive memory
         let mut detected_actions: Vec<serde_json::Value> = Vec::new();
         let mut proactive_recalls: Vec<serde_json::Value> = Vec::new();
-        let combined_text =
-            format!("{} {}", req.user_message, req.assistant_response).to_lowercase();
+        let combined_text = format!("{} {}", req.user_message, assistant_resp).to_lowercase();
 
         // Detect git operations
         if combined_text.contains("git commit")
@@ -2318,7 +2325,7 @@ impl MenteDbServer {
             // Store as an anti-pattern memory
             let anti_pattern_content = format!(
                 "AVOID: {} (User correction: {})",
-                req.assistant_response.chars().take(200).collect::<String>(),
+                assistant_resp.chars().take(200).collect::<String>(),
                 req.user_message.chars().take(200).collect::<String>(),
             );
             let ap_embedding = self
@@ -2418,7 +2425,7 @@ impl MenteDbServer {
             .collect();
         let stream_alerts = if !known_facts.is_empty() {
             let stream = CognitionStream::with_config(StreamConfig::default());
-            stream.feed_token(&req.assistant_response);
+            stream.feed_token(assistant_resp);
             stream.check_alerts(&known_facts)
         } else {
             vec![]
@@ -2703,27 +2710,38 @@ impl MenteDbServer {
             })
             .collect();
 
-        let response = json!({
+        // Build slim response with only fields the LLM actually uses.
+        // Debug fields logged server-side instead of wasting context tokens.
+        let mut response = json!({
             "ok": true,
             "context": context_summaries,
             "stored": stored_ids.len(),
-            "inference_applied": inference_applied,
-            "entities_resolved": entities_resolved,
-            "pain_warnings": pain_warnings,
             "contradictions": contradiction_count,
-            "phantoms": phantom_count,
-            "predictions": predictions,
-            "cache_hit": cache_hit,
-            "detected_actions": detected_actions,
-            "proactive_recalls": proactive_recalls,
-            "sentiment": sentiment_score,
-        })
-        .to_string();
+        });
+
+        // Only include non-empty optional fields
+        if !pain_warnings.is_empty() {
+            response["pain_warnings"] = json!(pain_warnings);
+        }
+        if !proactive_recalls.is_empty() {
+            response["proactive_recalls"] = json!(proactive_recalls);
+        }
+        if !detected_actions.is_empty() {
+            response["detected_actions"] = json!(detected_actions);
+        }
+
+        let response = response.to_string();
 
         tracing::info!(
             turn_id = req.turn_id,
             response_bytes = response.len(),
             context_entries = context_summaries.len(),
+            inference_applied,
+            entities_resolved,
+            phantom_count,
+            cache_hit,
+            sentiment = sentiment_score,
+            predictions_count = predictions.len(),
             "process_turn response"
         );
 
@@ -3489,12 +3507,12 @@ impl ServerHandler for MenteDbServer {
         .with_instructions(
             "MenteDB gives you persistent memory across sessions. You have 4 tools:\n\
              \n\
-             1. process_turn — ⚠️ CALL ON EVERY TURN. Pass user_message + assistant_response. Returns past context, stores the turn, runs inference.\n\
+             1. process_turn — Call on EVERY turn. Pass user_message + assistant_response (can be empty). Returns past context, stores the turn, detects contradictions.\n\
              2. store_memory — Save important facts (preferences, decisions, corrections). Add type + tags.\n\
              3. search_memories — Look up what you know. Pass a query OR a memory UUID for full content.\n\
              4. forget_memory — Delete a memory when the user asks to forget.\n\
              \n\
-             USE THE CONTEXT: process_turn returns truncated summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
+             USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
              If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
         )
     }

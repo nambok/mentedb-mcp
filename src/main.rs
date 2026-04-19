@@ -173,17 +173,18 @@ const AGENT_INSTRUCTIONS: &str = r#"# Memory
 
 You have persistent memory via MenteDB. You have 4 tools — use them.
 
-## ⚠️ process_turn — CALL EVERY TURN
+## process_turn — CALL EVERY TURN
 
-Call `process_turn` BEFORE responding, on EVERY turn. Pass `user_message` and `assistant_response`.
-- It stores the conversation, searches past context, runs inference, and detects contradictions.
+Call `process_turn` on EVERY turn. Pass `user_message` and `assistant_response`.
+- It returns relevant context from past conversations, stores the current turn, and detects contradictions.
 - Without this call, nothing is remembered.
 - Increment `turn_id` each turn (start at 0).
+- `assistant_response` can be brief or empty if you have not yet drafted a response.
 
 ## USE the returned context
 
 When `process_turn` returns:
-- **context**: Truncated summaries with IDs from past conversations. Reference them in your response. Call `search_memories(id)` for full content.
+- **context**: Summaries with IDs from past conversations. Reference them in your response. Call `search_memories(id)` for full content.
 - **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before.
 - **contradictions**: If > 0, flag the inconsistency.
 

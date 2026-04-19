@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.5](https://github.com/nambok/mentedb-mcp/compare/v0.4.4...v0.4.5) - 2026-04-19
+
+### Added
+
+- add login command for cloud authentication
+
 ## [0.4.4](https://github.com/nambok/mentedb-mcp/compare/v0.4.3...v0.4.4) - 2026-04-15
 
 ### Added

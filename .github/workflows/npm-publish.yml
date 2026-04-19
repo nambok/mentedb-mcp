@@ -3,7 +3,7 @@ name: Build and Publish npm
 on:
   push:
     tags:
-      - 'mentedb-mcp-v*'
+      - 'v*'
 
 jobs:
   build:

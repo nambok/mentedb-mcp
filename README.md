@@ -30,11 +30,14 @@ npx mentedb-mcp@latest login
 
 Without login, everything works locally in `~/.mentedb/`.
 
-### Alternative: install from crates.io
+### Alternative: install from source
+
+If you prefer building from source instead of npx:
 
 ```bash
 cargo install mentedb-mcp
 mentedb-mcp setup copilot
+mentedb-mcp login  # optional, enables cloud sync
 ```
 
 ### Updating
@@ -52,7 +55,7 @@ The `update` command shows you the exact instructions that will be written and a
 MenteDB can sync your local memories to MenteDB Cloud. To authenticate:
 
 ```bash
-mentedb-mcp login
+npx mentedb-mcp@latest login
 ```
 
 This opens your browser to authorize the CLI. Once authenticated, credentials are saved to `~/.mentedb/cloud.json` and the MCP server will sync with MenteDB Cloud on subsequent runs.

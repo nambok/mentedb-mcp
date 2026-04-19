@@ -12,6 +12,12 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use config::ServerConfig;
 
+fn home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+}
+
 #[derive(Parser)]
 #[command(name = "mentedb-mcp", about = "MCP server for MenteDB")]
 struct Cli {
@@ -137,9 +143,9 @@ async fn main() -> anyhow::Result<()> {
 /// Checks all known instruction file paths and updates any with stale version markers.
 /// Runs silently — errors are logged but never block server startup.
 fn auto_update_instructions() {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return,
+    let home = match home_dir() {
+        Some(h) => h,
+        None => return,
     };
 
     let instruction_paths = [
@@ -305,7 +311,7 @@ async fn run_login() -> anyhow::Result<()> {
     }
 
     // Save to ~/.mentedb/cloud.json
-    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let home = home_dir().unwrap_or_else(|| "~".to_string());
     let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
     std::fs::create_dir_all(&mentedb_dir)?;
 
@@ -328,7 +334,7 @@ async fn run_login() -> anyhow::Result<()> {
 }
 
 fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let home = home_dir().unwrap_or_else(|| "~".to_string());
     let binary = which_mentedb_mcp();
 
     match client {
@@ -339,6 +345,18 @@ fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
 }
 
 fn which_mentedb_mcp() -> String {
+    // If running via npx, use "npx" as the command so it stays version-proof.
+    // npx sets npm_execpath and npm_lifecycle_event env vars.
+    let is_npx = std::env::var("npm_execpath").is_ok()
+        || std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
+            .is_some_and(|p| p.contains(".npm/_npx") || p.contains("npx"));
+
+    if is_npx {
+        return "npx".to_string();
+    }
+
     std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(String::from))
@@ -361,9 +379,17 @@ fn write_if_missing(path: &std::path::Path, content: &str, label: &str) -> anyho
 
 fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow::Result<()> {
     let allow_list: Vec<&str> = TOOL_NAMES.to_vec();
+
+    // When running via npx, use "npx" as command and prepend package args
+    let (command, base_args) = if binary == "npx" {
+        ("npx", vec!["-y", "mentedb-mcp@latest"])
+    } else {
+        (binary, vec![])
+    };
+
     let mut mentedb_entry = serde_json::json!({
-        "command": binary,
-        "args": [],
+        "command": command,
+        "args": base_args,
         "alwaysAllow": allow_list,
     });
 
@@ -413,21 +439,34 @@ fn merge_mcp_config(path: &std::path::Path, binary: &str, force: bool) -> anyhow
     if existing.is_some() && !force {
         eprintln!("  [skip] mentedb already in MCP config: {}", path.display());
     } else {
-        // When updating, preserve user-configured fields (args, env) that we
-        // don't generate ourselves.  Only overwrite command and alwaysAllow.
+        // When updating, preserve user-configured args and env.
         if let Some(old) = &existing
             && let Some(old_obj) = old.as_object()
         {
             let new_obj = mentedb_entry.as_object_mut().unwrap();
-            // Preserve args if the new entry has none
-            if new_obj
-                .get("args")
-                .and_then(|a| a.as_array())
-                .is_none_or(|a| a.is_empty())
-                && let Some(old_args) = old_obj.get("args")
-            {
-                new_obj.insert("args".to_string(), old_args.clone());
+
+            // Extract user args from old config (skip npx prefix args like "-y", "mentedb-mcp@latest")
+            if let Some(old_args) = old_obj.get("args").and_then(|a| a.as_array()) {
+                let user_args: Vec<&serde_json::Value> = old_args
+                    .iter()
+                    .filter(|a| {
+                        let s = a.as_str().unwrap_or_default();
+                        // Skip npx meta-args; keep user args like --data-dir, --llm-provider
+                        s != "-y" && !s.starts_with("mentedb-mcp")
+                    })
+                    .collect();
+
+                if !user_args.is_empty() {
+                    let new_args = new_obj
+                        .get_mut("args")
+                        .and_then(|a| a.as_array_mut())
+                        .unwrap();
+                    for arg in user_args {
+                        new_args.push(arg.clone());
+                    }
+                }
             }
+
             // Merge env: keep old vars, overlay new ones
             if let Some(old_env) = old_obj.get("env").and_then(|e| e.as_object()) {
                 let new_env = new_obj
@@ -610,7 +649,16 @@ fn setup_copilot(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
 fn setup_claude(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB for Claude Desktop...\n");
 
-    let config_dir = std::path::PathBuf::from(home).join("Library/Application Support/Claude");
+    let config_dir = if cfg!(target_os = "macos") {
+        std::path::PathBuf::from(home).join("Library/Application Support/Claude")
+    } else if cfg!(target_os = "windows") {
+        std::env::var("APPDATA")
+            .map(|d| std::path::PathBuf::from(d).join("Claude"))
+            .unwrap_or_else(|_| std::path::PathBuf::from(home).join("AppData/Roaming/Claude"))
+    } else {
+        // Linux: ~/.config/Claude
+        std::path::PathBuf::from(home).join(".config/Claude")
+    };
     merge_mcp_config(
         &config_dir.join("claude_desktop_config.json"),
         binary,

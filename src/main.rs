@@ -724,11 +724,11 @@ fn append_instructions(
             eprintln!("  └─────────────────────────────────────────────────────────");
 
             if user_customized {
-                eprintln!("\n  ⚠️  Your file has custom edits inside the MenteDB block.");
+                eprintln!("\n  [warn] Your file has custom edits inside the MenteDB block.");
                 eprintln!(
-                    "     These will be replaced. Your content OUTSIDE the block is preserved."
+                    "         These will be replaced. Your content OUTSIDE the block is preserved."
                 );
-                eprintln!("     A backup will be saved to: {}.bak", path.display());
+                eprintln!("         A backup will be saved to: {}.bak", path.display());
             }
 
             eprint!("\n  Apply these instructions? [Y/n] ");

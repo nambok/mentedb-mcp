@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.9](https://github.com/nambok/mentedb-mcp/compare/v0.4.8...v0.4.9) - 2026-04-19
+
+### Fixed
+
+- use cfg(unix) for SIGTERM handler (Windows compat)
+
+### Other
+
+- use RELEASE_PAT so tags trigger npm-publish workflow
+
 ## [0.4.8](https://github.com/nambok/mentedb-mcp/compare/v0.4.7...v0.4.8) - 2026-04-19
 
 ### Fixed

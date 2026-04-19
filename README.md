@@ -8,7 +8,7 @@ The MCP (Model Context Protocol) server for MenteDB, the mind database for AI ag
 
 ## What is this?
 
-This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. By default, the server exposes **4 essential tools** for clean agent integration. Use `--full-tools` to expose all 32 tools for power users.
+This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. It connects to MenteDB Cloud by default — no local database, no file locks, works across multiple sessions simultaneously.
 
 ## Quick Start
 
@@ -18,17 +18,32 @@ Install and configure in one command:
 npx mentedb-mcp@latest setup copilot
 ```
 
-That's it. Your agent now has persistent memory. Replace `copilot` with `cursor` or `claude` for other editors.
-
-### Cloud sync (optional)
-
-To sync memories across devices, log in:
+Then authenticate:
 
 ```bash
 npx mentedb-mcp@latest login
 ```
 
-Without login, everything works locally in `~/.mentedb/`.
+That's it. Your agent now has persistent memory that works across all your sessions and devices. Replace `copilot` with `cursor` or `claude` for other editors.
+
+### How it works
+
+Once logged in, the MCP server runs as a thin HTTP client — all memory operations (store, search, recall) are handled by MenteDB Cloud. This means:
+
+- No local database locks
+- Multiple editor sessions can run simultaneously
+- Memories sync across devices automatically
+- Embeddings and extraction are handled server-side (no local GPU needed)
+
+### Local mode (offline/self-hosted)
+
+If you prefer to run entirely offline without cloud:
+
+```bash
+mentedb-mcp --local
+```
+
+In local mode, the server uses an embedded database at `~/.mentedb/`. Only one instance can run at a time due to file locking.
 
 ### Alternative: install from source
 
@@ -37,7 +52,7 @@ If you prefer building from source instead of npx:
 ```bash
 cargo install mentedb-mcp
 mentedb-mcp setup copilot
-mentedb-mcp login  # optional, enables cloud sync
+mentedb-mcp login
 ```
 
 ### Updating
@@ -50,19 +65,39 @@ mentedb-mcp update copilot
 
 The `update` command shows you the exact instructions that will be written and asks for confirmation. If you've customized the MenteDB block, it warns you and creates a `.bak` backup. Your own instructions outside the MenteDB block are always preserved.
 
-## Cloud Sync
+## CLI Commands
 
-MenteDB can sync your local memories to MenteDB Cloud. To authenticate:
+| Command | Description |
+|---------|-------------|
+| `setup <client>` | Auto-configure MCP for copilot, cursor, or claude |
+| `update <client>` | Update agent instructions (preserves customizations) |
+| `login` | Authenticate with MenteDB Cloud via browser |
+| `logout` | Remove cloud credentials |
+| `status` | Check cloud connection and token validity |
+
+## Authentication
 
 ```bash
 npx mentedb-mcp@latest login
 ```
 
-This opens your browser to authorize the CLI. Once authenticated, credentials are saved to `~/.mentedb/cloud.json` and the MCP server will sync with MenteDB Cloud on subsequent runs.
+This opens your browser to authorize the CLI. Once authenticated, credentials are saved to `~/.mentedb/cloud.json` and the MCP server connects to MenteDB Cloud on subsequent runs.
 
-### Manual Configuration
+To check your connection:
 
-If you prefer manual setup, see the client-specific configs below.
+```bash
+npx mentedb-mcp@latest status
+```
+
+To revoke access:
+
+```bash
+npx mentedb-mcp@latest logout
+```
+
+You can also revoke sessions from the web dashboard at [app.mentedb.com](https://app.mentedb.com).
+
+## Manual Configuration
 
 ### Claude Desktop
 
@@ -72,8 +107,8 @@ Add to `~/.config/claude/claude_desktop_config.json` (macOS/Linux) or `%APPDATA%
 {
   "mcpServers": {
     "mentedb": {
-      "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb"]
+      "command": "npx",
+      "args": ["-y", "mentedb-mcp@latest"]
     }
   }
 }
@@ -87,25 +122,9 @@ Add to your Cursor MCP configuration:
 {
   "mcpServers": {
     "mentedb": {
-      "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb"],
+      "command": "npx",
+      "args": ["-y", "mentedb-mcp@latest"],
       "transportType": "stdio"
-    }
-  }
-}
-```
-
-### GitHub Copilot (VS Code)
-
-Add to `.vscode/mcp.json` in your project:
-
-```json
-{
-  "servers": {
-    "mentedb": {
-      "type": "stdio",
-      "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb"]
     }
   }
 }
@@ -119,8 +138,8 @@ Add to `~/.copilot/mcp-config.json`:
 {
   "mcpServers": {
     "mentedb": {
-      "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb"],
+      "command": "npx",
+      "args": ["-y", "mentedb-mcp@latest"],
       "alwaysAllow": [
         "process_turn", "store_memory", "search_memories", "forget_memory"
       ]
@@ -129,107 +148,22 @@ Add to `~/.copilot/mcp-config.json`:
 }
 ```
 
-The `alwaysAllow` list lets memory tools run without approval prompts. By default, only 4 essential tools are exposed. Add `--full-tools` to args to expose all 32 tools.
+The `alwaysAllow` list lets memory tools run without approval prompts.
 
-## Embeddings
+## Tools
 
-The server uses local Candle embeddings by default with the `all-MiniLM-L6-v2` model (384 dimensions). No API key needed for semantic search. The model auto-downloads from Hugging Face on first use (~80MB) and is cached locally. If the download fails (offline), it falls back to hash embeddings.
-
-## LLM Extraction (Optional)
-
-Embeddings power search. For LLM based memory extraction via `ingest_conversation`, you can optionally configure an API key:
-
-```json
-{
-  "mcpServers": {
-    "mentedb": {
-      "command": "mentedb-mcp",
-      "args": ["--data-dir", "~/.mentedb", "--llm-provider", "anthropic"],
-      "env": {
-        "MENTEDB_LLM_API_KEY": "sk-ant-..."
-      }
-    }
-  }
-}
-```
-
-Supported providers: `openai`, `anthropic`, `ollama`, `mock` (default). Without an API key, `ingest_conversation` uses the mock provider which does basic keyword extraction.
-
-## Default Tools (4 tools)
-
-By default, the server exposes only 4 essential tools for optimal agent compliance:
+By default, the server exposes 4 essential tools:
 
 | Tool | Description |
 |------|-------------|
-| `process_turn` | **Call every turn.** Stores conversation, retrieves context, runs inference, detects contradictions. |
+| `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions. |
 | `store_memory` | Store an important fact with type and tags. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. |
 | `forget_memory` | Delete a memory by ID. |
 
-## All Tools (`--full-tools`, 32 tools)
+### Local mode: full tools (`--full-tools`)
 
-With `--full-tools`, all tools below are also exposed:
-
-### Core Memory (8 tools)
-
-| Tool | Description |
-|------|-------------|
-| `store_memory` | Store a new memory with content, type, tags, and metadata. Returns the UUID. |
-| `get_memory` | Retrieve a memory by UUID with all fields including salience and confidence. |
-| `recall_memory` | Recall a specific memory by UUID. Returns content, type, metadata, timestamps. |
-| `search_memories` | Semantic similarity search with optional type filtering and result limit. |
-| `relate_memories` | Create a typed edge between two memories (caused, contradicts, supports, etc). |
-| `forget_memory` | Delete a memory from the database with optional reason. |
-| `forget_all` | Delete ALL memories permanently. Requires `confirm='CONFIRM'` safety check. |
-| `ingest_conversation` | Extract structured memories from raw conversation text via LLM provider. |
-
-Memory types: `episodic`, `semantic`, `procedural`, `anti_pattern`, `reasoning`, `correction`.
-
-Edge types: `caused`, `before`, `related`, `contradicts`, `supports`, `supersedes`, `derived`, `part_of`.
-
-### Context Assembly (1 tool)
-
-| Tool | Description |
-|------|-------------|
-| `assemble_context` | Build an optimized context window from memories for a query with a real token budget. Supports `structured`, `compact`, and `delta` output formats. Returns zone allocations and token usage metadata. |
-
-### Knowledge Graph (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `get_related` | Traverse relationships from a memory with optional edge type filter and depth. |
-| `find_path` | Find the shortest path between two memories in the knowledge graph. |
-| `get_subgraph` | Extract all nodes and edges within N hops of a center memory. |
-| `find_contradictions` | Find all memories that contradict a given memory via graph edges. |
-| `propagate_belief` | Propagate a confidence change through the graph, returning all affected memories. |
-
-### Memory Consolidation (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `consolidate_memories` | Cluster similar memories and merge them into consolidated semantic memories. |
-| `apply_decay` | Apply time based salience decay to all memories. Configurable half life. |
-| `compress_memory` | Extract key sentences from a memory, removing filler. Returns compression ratio. |
-| `evaluate_archival` | Categorize all memories into keep, archive, delete, or consolidate decisions. |
-| `extract_facts` | Extract structured subject/predicate/object triples from a memory. |
-| `gdpr_forget` | GDPR compliant deletion of all memories for a subject with full audit log. |
-
-### Cognitive Systems (12 tools)
-
-| Tool | Description |
-|------|-------------|
-| `process_turn` | **One call per turn.** Searches context, extracts memories, stores with embeddings, runs inference, tracks trajectory. Returns relevant context, stored IDs, pain warnings, and topic predictions. |
-| `record_pain` | Record a negative experience (pain signal) so MenteDB warns on similar contexts. |
-| `detect_phantoms` | Scan content for knowledge gaps, entities referenced but not in memory. |
-| `resolve_phantom` | Mark a knowledge gap (phantom memory) as resolved. |
-| `record_trajectory` | Record a conversation turn for trajectory tracking and topic prediction. |
-| `predict_topics` | Predict likely next topics based on the current conversation trajectory. |
-| `detect_interference` | Find pairs of memories similar enough to confuse an LLM, with disambiguation hints. |
-| `check_stream` | Check LLM output text against known facts for contradictions and reinforcements. |
-| `write_inference` | Run write time inference: contradiction detection, edge suggestion, confidence adjustment. |
-| `register_entity` | Register an entity for phantom memory detection. |
-| `get_cognitive_state` | Full cognitive state snapshot: pain signals, phantoms, trajectory predictions. |
-| `get_stats` | Database statistics: version, memory count estimate, operational status. |
+In local mode (`--local`), you can expose all 32 tools with `--full-tools` for advanced memory operations including knowledge graph traversal, consolidation, cognitive systems, and GDPR forget.
 
 ## Configuration
 
@@ -239,12 +173,13 @@ Edge types: `caused`, `before`, `related`, `contradicts`, `supports`, `supersede
 mentedb-mcp [OPTIONS]
 
 Options:
+  --local                     Force local mode (embedded database, single instance)
   --data-dir <PATH>           Data directory path [default: ~/.mentedb]
-  --embedding-dim <DIM>       Embedding vector dimension [default: 384]
-  --llm-provider <PROVIDER>   LLM provider for extraction: openai, anthropic, ollama, mock [default: mock]
+  --embedding-dim <DIM>       Embedding vector dimension [default: 128]
+  --llm-provider <PROVIDER>   LLM provider for local extraction: openai, anthropic, ollama, mock [default: mock]
   --llm-api-key <KEY>         API key for the LLM provider (overrides env var)
   --llm-model <MODEL>         Model name override for the LLM provider
-  --full-tools                Expose all 32 tools (default: 4 essential tools)
+  --full-tools                Expose all 32 tools (local mode only, default: 4 essential tools)
   -h, --help                  Print help
 ```
 
@@ -252,29 +187,19 @@ Options:
 
 | Variable | Description |
 |----------|-------------|
-| `MENTEDB_LLM_API_KEY` | Default API key for LLM extraction (also read by `--llm-api-key`) |
-| `MENTEDB_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `ollama`, `mock` (also read by `--llm-provider`) |
-| `MENTEDB_LLM_MODEL` | Model name override for the LLM provider (also read by `--llm-model`) |
-| `OPENAI_API_KEY` | Fallback API key when using the OpenAI provider |
-| `ANTHROPIC_API_KEY` | Fallback API key when using the Anthropic provider |
-| `RUST_LOG` | Logging filter, e.g. `RUST_LOG=mentedb_mcp=debug` |
+| `MENTEDB_API_URL` | Override cloud API URL (default: https://api.mentedb.com) |
+| `MENTEDB_CLOUD_URL` | Override cloud dashboard URL (for login flow) |
+| `MENTEDB_LLM_PROVIDER` | LLM provider for local mode: `openai`, `anthropic`, `ollama`, `mock` |
+| `MENTEDB_LLM_API_KEY` | API key for local LLM extraction |
+| `MENTEDB_LLM_MODEL` | Model name override |
 
-The server writes logs to both stderr (for MCP clients) and a rolling file at `<data-dir>/mentedb-mcp.log`.
-
-## Resources
-
-MCP resources provide read only access to server state.
-
-| URI | Type | Description |
-|-----|------|-------------|
-| `mentedb://stats` | Static | Database statistics: version, memory count, operational status |
-| `mentedb://memories` | Static | JSON listing of all available tools with names and descriptions |
-| `mentedb://memories/{id}` | Template | Full memory content by UUID via direct database lookup |
-| `mentedb://cognitive/state` | Template | Cognitive state snapshot: pain signals, phantoms, trajectory |
+The server writes logs to both stderr and a rolling file at `~/.mentedb/mentedb-mcp.log`.
 
 ## Architecture
 
-The server runs on stdio transport using the rmcp framework. It is backed by the MenteDB engine, which is composed of 13 Rust crates covering storage, indexing, graph, context assembly, consolidation, cognitive systems, embedding, and extraction. Cognitive subsystems (pain registry, phantom tracker, trajectory tracker) are initialized at startup and maintained in memory for the lifetime of the server process.
+**Cloud mode (default):** The server runs as a lightweight HTTP proxy on stdio transport. All memory operations are forwarded to MenteDB Cloud which handles embedding generation (via AWS Bedrock Titan), semantic search, LLM extraction (via Claude), and DynamoDB storage. No local state is kept.
+
+**Local mode (`--local`):** The server uses the full MenteDB engine with an embedded fjall database, local Candle embeddings (all-MiniLM-L6-v2), and optional LLM extraction. This mode supports all 32 tools including knowledge graph, consolidation, and cognitive systems.
 
 ## Issues
 

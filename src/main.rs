@@ -1,3 +1,5 @@
+mod cloud_client;
+mod cloud_server;
 mod config;
 mod resources;
 mod server;
@@ -47,6 +49,10 @@ struct Cli {
     /// Expose all tools (default: only essential tools for better agent compliance)
     #[arg(long)]
     full_tools: bool,
+
+    /// Force local mode (use embedded database even when cloud credentials exist)
+    #[arg(long)]
+    local: bool,
 }
 
 #[derive(Subcommand)]
@@ -133,8 +139,17 @@ async fn main() -> anyhow::Result<()> {
     // Auto-update agent instructions on startup (silent, best-effort)
     auto_update_instructions();
 
-    // Validate cloud credentials at startup (non-blocking, warns on revoked)
-    validate_cloud_token_startup().await;
+    // Check for cloud credentials — if present, use cloud mode (HTTP proxy, no local DB).
+    // This allows multiple MCP server instances to run concurrently.
+    if !cli.local {
+        if let Some((api_url, token)) = load_cloud_credentials() {
+            tracing::info!("Cloud credentials found, starting in cloud mode (no local database)");
+            return cloud_server::run(api_url, token).await;
+        }
+    }
+
+    // No cloud credentials or --local flag — fall back to local embedded database mode.
+    tracing::info!("Starting in local mode (embedded database)");
 
     let config = ServerConfig::new(
         data_dir,
@@ -426,63 +441,33 @@ async fn run_status() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn validate_cloud_token_startup() {
-    let home = match home_dir() {
-        Some(h) => h,
-        None => return,
-    };
+/// Load cloud credentials from ~/.mentedb/cloud.json.
+/// Returns (api_url, token) if valid credentials exist.
+/// Also checks the MENTEDB_API_URL env var as an override for the API URL.
+fn load_cloud_credentials() -> Option<(String, String)> {
+    let home = home_dir()?;
     let config_path = std::path::PathBuf::from(&home)
         .join(".mentedb")
         .join("cloud.json");
     if !config_path.exists() {
-        return;
+        return None;
     }
 
-    let config_str = match std::fs::read_to_string(&config_path) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let config: serde_json::Value = match serde_json::from_str(&config_str) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+    let config_str = std::fs::read_to_string(&config_path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&config_str).ok()?;
 
-    let api_url = config["api_url"]
-        .as_str()
-        .unwrap_or("https://api.mentedb.com");
-    let token = match config["token"].as_str() {
-        Some(t) if !t.is_empty() => t,
-        _ => return,
-    };
-
-    let client = reqwest::Client::new();
-    let res = client
-        .get(format!("{api_url}/api/sessions"))
-        .header("Authorization", format!("Bearer {token}"))
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await;
-
-    match res {
-        Ok(resp) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
-            tracing::error!(
-                "Cloud session has been revoked. Run `mentedb-mcp login` to re-authenticate."
-            );
-            eprintln!(
-                "[mentedb-mcp] ERROR: Your cloud session has been revoked. \
-                 Run `mentedb-mcp login` to create a new session."
-            );
-            // Remove stale credentials so we don't keep hitting the API
-            std::fs::remove_file(&config_path).ok();
-        }
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!("Cloud connection verified");
-        }
-        _ => {
-            // Network error or server issue - don't alarm, just note it
-            tracing::debug!("Could not validate cloud token at startup (network issue)");
-        }
+    let token = config["token"].as_str().unwrap_or_default();
+    if token.is_empty() {
+        return None;
     }
+
+    // MENTEDB_API_URL env var takes precedence over stored api_url
+    let api_url = std::env::var("MENTEDB_API_URL")
+        .ok()
+        .or_else(|| config["api_url"].as_str().map(String::from))
+        .unwrap_or_else(|| "https://api.mentedb.com".to_string());
+
+    Some((api_url, token.to_string()))
 }
 
 fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {

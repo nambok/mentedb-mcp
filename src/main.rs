@@ -602,6 +602,7 @@ fn setup_copilot(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     append_instructions(&copilot_dir.join("copilot-instructions.md"), true, force)?;
 
     println!("\nDone! Restart Copilot CLI to activate MenteDB memory.");
+    println!("\nTo sync memories across devices, run: mentedb-mcp login");
     Ok(())
 }
 
@@ -617,6 +618,7 @@ fn setup_claude(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
 
     println!("\nDone! Restart Claude Desktop to activate MenteDB memory.");
     println!("Note: Claude Desktop reads server instructions automatically from the MCP server.");
+    println!("\nTo sync memories across devices, run: mentedb-mcp login");
     Ok(())
 }
 
@@ -628,5 +630,6 @@ fn setup_cursor(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     append_instructions(&cursor_dir.join("rules/mentedb.md"), true, force)?;
 
     println!("\nDone! Restart Cursor to activate MenteDB memory.");
+    println!("\nTo sync memories across devices, run: mentedb-mcp login");
     Ok(())
 }

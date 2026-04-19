@@ -1,0 +1,13 @@
+{
+  "name": "@mentedb/mcp-darwin-arm64",
+  "version": "0.4.3",
+  "description": "mentedb-mcp binary for darwin-arm64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nambok/mentedb-mcp"
+  },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin"]
+}

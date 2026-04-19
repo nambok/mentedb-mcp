@@ -1,0 +1,23 @@
+{
+  "name": "mentedb-mcp",
+  "version": "0.4.3",
+  "description": "MCP server for MenteDB, persistent memory for AI agents",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nambok/mentedb-mcp"
+  },
+  "homepage": "https://mentedb.com",
+  "keywords": ["mcp", "ai", "memory", "database", "agents", "claude", "copilot", "cursor"],
+  "bin": {
+    "mentedb-mcp": "bin/mentedb-mcp"
+  },
+  "files": ["bin"],
+  "optionalDependencies": {
+    "@mentedb/mcp-darwin-arm64": "0.4.3",
+    "@mentedb/mcp-darwin-x64": "0.4.3",
+    "@mentedb/mcp-linux-arm64": "0.4.3",
+    "@mentedb/mcp-linux-x64": "0.4.3",
+    "@mentedb/mcp-win32-x64": "0.4.3"
+  }
+}

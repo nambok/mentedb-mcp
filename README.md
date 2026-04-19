@@ -12,7 +12,13 @@ This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible c
 
 ## Quick Start
 
-Install from crates.io:
+Install via npx (no build step):
+
+```bash
+npx mentedb-mcp@latest setup copilot
+```
+
+Or install from crates.io:
 
 ```bash
 # Requires Rust: https://rustup.rs
@@ -43,6 +49,16 @@ mentedb-mcp update copilot
 ```
 
 The `update` command shows you the exact instructions that will be written and asks for confirmation. If you've customized the MenteDB block, it warns you and creates a `.bak` backup. Your own instructions outside the MenteDB block are always preserved.
+
+## Cloud Sync
+
+MenteDB can sync your local memories to MenteDB Cloud. To authenticate:
+
+```bash
+mentedb-mcp login
+```
+
+This opens your browser to authorize the CLI. Once authenticated, credentials are saved to `~/.mentedb/cloud.json` and the MCP server will sync with MenteDB Cloud on subsequent runs.
 
 ### Manual Configuration
 

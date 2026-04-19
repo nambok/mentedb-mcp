@@ -57,6 +57,8 @@ enum Commands {
         #[arg(value_enum, default_value = "copilot")]
         client: SetupClient,
     },
+    /// Authenticate with MenteDB Cloud
+    Login,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -73,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Setup { client }) => return run_setup(client, false),
         Some(Commands::Update { client }) => return run_setup(client, true),
+        Some(Commands::Login) => return run_login().await,
         None => {}
     }
 
@@ -204,6 +207,121 @@ Use proactively — if the user mentions a project, search for what you know abo
 
 When the user says "forget" or "don't remember that", delete the memory by ID.
 "#;
+
+async fn run_login() -> anyhow::Result<()> {
+    use std::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    println!("\nAuthenticating with MenteDB Cloud...\n");
+
+    // Find available port
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+
+    // Channel to receive the token
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
+
+    // CORS preflight handler
+    let cors_headers = [
+        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+            "content-type",
+        ),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+            "POST, OPTIONS",
+        ),
+    ];
+
+    let cors_for_options = cors_headers.clone();
+    let cors_for_post = cors_headers;
+
+    // Start local HTTP server
+    let tx_clone = tx.clone();
+    let server = axum::Router::new()
+        .route(
+            "/callback",
+            axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+                let tx = tx_clone.clone();
+                async move {
+                    let api_key = body
+                        .get("api_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+
+                    if let Some(sender) = tx.lock().await.take() {
+                        let _ = sender.send(api_key);
+                    }
+
+                    (
+                        axum::http::StatusCode::OK,
+                        cors_for_post.map(|(k, v)| (k, axum::http::HeaderValue::from_static(v))),
+                        axum::Json(serde_json::json!({"ok": true})),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/callback",
+            axum::routing::options(|| async move {
+                (
+                    axum::http::StatusCode::OK,
+                    cors_for_options.map(|(k, v)| (k, axum::http::HeaderValue::from_static(v))),
+                    "",
+                )
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, server).await.ok();
+    });
+
+    // Open browser
+    let url = format!("https://app-dev.mentedb.com/auth/device?callback_port={port}");
+    println!("  Opening browser: {url}");
+    println!("  Waiting for authorization...\n");
+
+    if open::that(&url).is_err() {
+        println!("  Could not open browser automatically.");
+        println!("  Please visit: {url}\n");
+    }
+
+    // Wait for token (with timeout)
+    let token = tokio::time::timeout(std::time::Duration::from_secs(300), rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("Login timed out after 5 minutes"))?
+        .map_err(|_| anyhow::anyhow!("Login cancelled"))?;
+
+    if token.is_empty() {
+        anyhow::bail!("Received empty token");
+    }
+
+    // Save to ~/.mentedb/cloud.json
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
+    std::fs::create_dir_all(&mentedb_dir)?;
+
+    let cloud_config = serde_json::json!({
+        "api_url": "https://api-dev.mentedb.com",
+        "token": token,
+    });
+
+    let config_path = mentedb_dir.join("cloud.json");
+    std::fs::write(&config_path, serde_json::to_string_pretty(&cloud_config)?)?;
+
+    server_handle.abort();
+
+    println!("  Authenticated successfully!");
+    println!("  Credentials saved to: {}", config_path.display());
+    println!("\n  Your MCP server will now sync with MenteDB Cloud.");
+
+    Ok(())
+}
 
 fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());

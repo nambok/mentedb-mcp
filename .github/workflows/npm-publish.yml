@@ -148,6 +148,9 @@ jobs:
           chmod +x npm/linux-x64/bin/mentedb-mcp
           chmod +x npm/mentedb-mcp/bin/mentedb-mcp
 
+      - name: Copy README to npm package
+        run: cp README.md npm/mentedb-mcp/README.md
+
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

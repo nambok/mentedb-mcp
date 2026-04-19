@@ -1,6 +1,6 @@
 # MenteDB MCP Server
 
-> ⚠️ **Beta** — MenteDB is under active development. APIs may change between minor versions.
+> **Beta** — MenteDB is under active development. APIs may change between minor versions.
 
 The MCP (Model Context Protocol) server for MenteDB, the mind database for AI agents.
 
@@ -161,7 +161,7 @@ By default, the server exposes only 4 essential tools for optimal agent complian
 
 | Tool | Description |
 |------|-------------|
-| `process_turn` | **⚠️ Call every turn.** Stores conversation, retrieves context, runs inference, detects contradictions. |
+| `process_turn` | **Call every turn.** Stores conversation, retrieves context, runs inference, detects contradictions. |
 | `store_memory` | Store an important fact with type and tags. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. |
 | `forget_memory` | Delete a memory by ID. |

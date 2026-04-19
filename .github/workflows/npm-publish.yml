@@ -34,6 +34,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+          cache-on-failure: true
+
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
         run: |

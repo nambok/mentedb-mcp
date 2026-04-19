@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.5](https://github.com/nambok/mentedb-mcp/compare/v0.4.4...v0.4.5) - 2026-04-19
+
+### Added
+
+- prompt login after setup for cloud sync
+- add login command for cloud authentication
+
+### Fixed
+
+- update test_process_turn to match trimmed response fields
+- improve MCP memory UX and reduce token waste
+- make cloud URLs configurable, default to production
+
+### Other
+
+- simplify README quick start with login section
+
 ## [0.4.4](https://github.com/nambok/mentedb-mcp/compare/v0.4.3...v0.4.4) - 2026-04-15
 
 ### Added

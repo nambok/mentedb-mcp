@@ -282,7 +282,9 @@ async fn run_login() -> anyhow::Result<()> {
     });
 
     // Open browser
-    let url = format!("https://app-dev.mentedb.com/auth/device?callback_port={port}");
+    let cloud_url = std::env::var("MENTEDB_CLOUD_URL")
+        .unwrap_or_else(|_| "https://app.mentedb.com".to_string());
+    let url = format!("{cloud_url}/auth/device?callback_port={port}");
     println!("  Opening browser: {url}");
     println!("  Waiting for authorization...\n");
 
@@ -307,7 +309,8 @@ async fn run_login() -> anyhow::Result<()> {
     std::fs::create_dir_all(&mentedb_dir)?;
 
     let cloud_config = serde_json::json!({
-        "api_url": "https://api-dev.mentedb.com",
+        "api_url": std::env::var("MENTEDB_API_URL")
+            .unwrap_or_else(|_| "https://api.mentedb.com".to_string()),
         "token": token,
     });
 

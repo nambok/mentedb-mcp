@@ -65,6 +65,10 @@ enum Commands {
     },
     /// Authenticate with MenteDB Cloud
     Login,
+    /// Remove cloud credentials
+    Logout,
+    /// Check cloud connection status
+    Status,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -82,6 +86,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Setup { client }) => return run_setup(client, false),
         Some(Commands::Update { client }) => return run_setup(client, true),
         Some(Commands::Login) => return run_login().await,
+        Some(Commands::Logout) => return run_logout(),
+        Some(Commands::Status) => return run_status().await,
         None => {}
     }
 
@@ -126,6 +132,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Auto-update agent instructions on startup (silent, best-effort)
     auto_update_instructions();
+
+    // Validate cloud credentials at startup (non-blocking, warns on revoked)
+    validate_cloud_token_startup().await;
 
     let config = ServerConfig::new(
         data_dir,
@@ -331,6 +340,149 @@ async fn run_login() -> anyhow::Result<()> {
     println!("\n  Your MCP server will now sync with MenteDB Cloud.");
 
     Ok(())
+}
+
+fn run_logout() -> anyhow::Result<()> {
+    let home = home_dir().unwrap_or_else(|| "~".to_string());
+    let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
+    let config_path = mentedb_dir.join("cloud.json");
+
+    if config_path.exists() {
+        std::fs::remove_file(&config_path)?;
+        println!("  Logged out. Cloud credentials removed.");
+    } else {
+        println!("  Not logged in (no credentials found).");
+    }
+    Ok(())
+}
+
+async fn run_status() -> anyhow::Result<()> {
+    let home = home_dir().unwrap_or_else(|| "~".to_string());
+    let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
+    let config_path = mentedb_dir.join("cloud.json");
+
+    if !config_path.exists() {
+        println!("  Status: Not logged in");
+        println!("  Run `mentedb-mcp login` to authenticate.");
+        return Ok(());
+    }
+
+    let config_str = std::fs::read_to_string(&config_path)?;
+    let config: serde_json::Value = serde_json::from_str(&config_str)?;
+
+    let api_url = config["api_url"]
+        .as_str()
+        .unwrap_or("https://api.mentedb.com");
+    let token = config["token"].as_str().unwrap_or("");
+
+    if token.is_empty() {
+        println!("  Status: Invalid credentials (empty token)");
+        println!("  Run `mentedb-mcp login` to re-authenticate.");
+        return Ok(());
+    }
+
+    println!("  Checking cloud connection...");
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{api_url}/api/sessions"))
+        .header("Authorization", format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+
+    match res {
+        Ok(resp) => match resp.status().as_u16() {
+            200 => {
+                println!("  Status: Connected");
+                println!("  Cloud URL: {api_url}");
+                let masked = format!("mdb_{}...", &token[4..12]);
+                println!("  Token: {masked}");
+            }
+            401 | 403 => {
+                println!("  Status: Session revoked");
+                println!();
+                println!("  Your session has been revoked (possibly from the web dashboard).");
+                println!("  Run `mentedb-mcp login` to create a new session.");
+                // Remove stale credentials
+                std::fs::remove_file(&config_path).ok();
+            }
+            code => {
+                println!("  Status: Error (HTTP {code})");
+                println!("  The cloud service may be temporarily unavailable.");
+            }
+        },
+        Err(e) => {
+            if e.is_timeout() {
+                println!("  Status: Timeout");
+                println!("  Could not reach {api_url} within 10 seconds.");
+            } else {
+                println!("  Status: Connection failed");
+                println!("  Error: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn validate_cloud_token_startup() {
+    let home = match home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let config_path = std::path::PathBuf::from(&home)
+        .join(".mentedb")
+        .join("cloud.json");
+    if !config_path.exists() {
+        return;
+    }
+
+    let config_str = match std::fs::read_to_string(&config_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let config: serde_json::Value = match serde_json::from_str(&config_str) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let api_url = config["api_url"]
+        .as_str()
+        .unwrap_or("https://api.mentedb.com");
+    let token = match config["token"].as_str() {
+        Some(t) if !t.is_empty() => t,
+        _ => return,
+    };
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{api_url}/api/sessions"))
+        .header("Authorization", format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
+
+    match res {
+        Ok(resp) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
+            tracing::error!(
+                "Cloud session has been revoked. Run `mentedb-mcp login` to re-authenticate."
+            );
+            eprintln!(
+                "[mentedb-mcp] ERROR: Your cloud session has been revoked. \
+                 Run `mentedb-mcp login` to create a new session."
+            );
+            // Remove stale credentials so we don't keep hitting the API
+            std::fs::remove_file(&config_path).ok();
+        }
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("Cloud connection verified");
+        }
+        _ => {
+            // Network error or server issue - don't alarm, just note it
+            tracing::debug!("Could not validate cloud token at startup (network issue)");
+        }
+    }
 }
 
 fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {

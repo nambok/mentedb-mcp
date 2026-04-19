@@ -12,37 +12,34 @@ This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible c
 
 ## Quick Start
 
-Install via npx (no build step):
+Install and configure in one command:
 
 ```bash
 npx mentedb-mcp@latest setup copilot
 ```
 
-Or install from crates.io:
+That's it. Your agent now has persistent memory. Replace `copilot` with `cursor` or `claude` for other editors.
+
+### Cloud sync (optional)
+
+To sync memories across devices, log in:
 
 ```bash
-# Requires Rust: https://rustup.rs
+npx mentedb-mcp@latest login
+```
+
+Without login, everything works locally in `~/.mentedb/`.
+
+### Alternative: install from crates.io
+
+```bash
 cargo install mentedb-mcp
-```
-
-Then run the auto-setup for your client:
-
-```bash
-# GitHub Copilot CLI
 mentedb-mcp setup copilot
-
-# Claude Desktop
-mentedb-mcp setup claude
-
-# Cursor
-mentedb-mcp setup cursor
 ```
-
-This creates the MCP config, agent instructions, and `alwaysAllow` list automatically. No manual file editing needed.
 
 ### Updating
 
-After upgrading (`cargo install mentedb-mcp`), instructions auto-update on server startup. To manually review and confirm changes:
+After upgrading, instructions auto-update on server startup. To manually review and confirm changes:
 
 ```bash
 mentedb-mcp update copilot

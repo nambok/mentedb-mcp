@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.17](https://github.com/nambok/mentedb-mcp/compare/v0.4.16...v0.4.17) - 2026-04-20
+
+### Added
+
+- comprehensive memory instructions with scope, types, quality guidance
+
+### Other
+
+- add memory types, scope, quality guidelines to README
+
 ## [0.4.16](https://github.com/nambok/mentedb-mcp/compare/v0.4.15...v0.4.16) - 2026-04-20
 
 ### Security

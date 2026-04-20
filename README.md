@@ -156,10 +156,20 @@ By default, the server exposes 4 essential tools:
 
 | Tool | Description |
 |------|-------------|
-| `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions. |
+| `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions, generates pain warnings. Accepts `project_context` and `agent_id` for scoping. |
 | `store_memory` | Store an important fact with type, tags, and optional scope. |
-| `search_memories` | Semantic search by query, or get full content by memory UUID. |
-| `forget_memory` | Delete a memory by ID. |
+| `search_memories` | Semantic search by query, or get full content by memory UUID. Accepts `limit` (default 10, max 50) and `memory_type` filter. |
+| `forget_memory` | Delete a memory by ID. Accepts optional `reason` for audit logging. |
+
+### What `process_turn` returns
+
+| Field | Description |
+|-------|-------------|
+| `context` | Top 10 semantically relevant memories + all always-scoped memories |
+| `stored` | Number of facts auto-extracted and stored from this turn |
+| `contradictions` | Number of contradictions detected |
+| `contradiction_details` | Array of `{ memory_id, explanation }` for each contradiction |
+| `pain_warnings` | Array of `{ id, warning }` from anti_pattern memories matching current context |
 
 ### Memory Types
 

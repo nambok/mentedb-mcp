@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.18](https://github.com/nambok/mentedb-mcp/compare/v0.4.17...v0.4.18) - 2026-04-20
+
+### Fixed
+
+- forward all parameters in cloud proxy
+
+### Other
+
+- document new parameters and pain_warnings in README
+
 ## [0.4.17](https://github.com/nambok/mentedb-mcp/compare/v0.4.16...v0.4.17) - 2026-04-20
 
 ### Added

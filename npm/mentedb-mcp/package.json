@@ -12,7 +12,7 @@
   "bin": {
     "mentedb-mcp": "bin/mentedb-mcp"
   },
-  "files": ["bin"],
+  "files": ["bin", "README.md"],
   "optionalDependencies": {
     "@mentedb/mcp-darwin-arm64": "0.4.3",
     "@mentedb/mcp-darwin-x64": "0.4.3",

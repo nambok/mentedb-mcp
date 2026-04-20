@@ -157,9 +157,37 @@ By default, the server exposes 4 essential tools:
 | Tool | Description |
 |------|-------------|
 | `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions. |
-| `store_memory` | Store an important fact with type and tags. |
+| `store_memory` | Store an important fact with type, tags, and optional scope. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. |
 | `forget_memory` | Delete a memory by ID. |
+
+### Memory Types
+
+| Type | Use for | Example |
+|------|---------|---------|
+| `semantic` | Facts, preferences, project details | "User prefers Rust over Go" |
+| `episodic` | What happened in a specific interaction | "Debugged OOM in prod on Jan 5" |
+| `procedural` | How to do things | "To release: bump version, tag, push" |
+| `correction` | Something was wrong and is now right | "API key goes in .env, not config.toml" |
+| `anti_pattern` | Things to never do | "Never force-push to main" |
+| `reasoning` | Why a decision was made | "Chose DynamoDB over Postgres for scaling" |
+
+### Memory Scope
+
+| Scope | Behavior |
+|-------|----------|
+| `contextual` (default) | Retrieved by semantic similarity when relevant to the conversation |
+| `always` | Returned on every `process_turn` call regardless of topic. Use for critical rules. |
+
+Set `scope: 'always'` when the user says "always remember this" or states a hard constraint.
+
+### Memory Quality Guidelines
+
+- **One fact per memory** — don't combine unrelated facts in a single memory
+- **Self-contained** — "User prefers tabs over spaces in Python" not just "prefers tabs"
+- **Include context** — "For mentedb-mcp, deploy with..." not just "deploy with..."
+- **Keep under 200 words** — summarize if needed
+- **Don't store** — greetings, temporary info, large code blocks, chitchat
 
 ### Local mode: full tools (`--full-tools`)
 

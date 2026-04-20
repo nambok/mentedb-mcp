@@ -1,9 +1,12 @@
 use rmcp::ErrorData as McpError;
+use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::ServiceExt;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
+use rmcp::service::RequestContext;
 use rmcp::transport::io::stdio;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -77,7 +80,6 @@ pub struct ForgetMemoryRequest {
 /// No local database is opened — multiple instances can run concurrently.
 pub struct CloudMenteDbServer {
     client: CloudClient,
-    #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
 }
 
@@ -234,6 +236,27 @@ impl ServerHandler for CloudMenteDbServer {
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
              If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
         )
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _cx: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult {
+            meta: None,
+            tools: self.tool_router.list_all(),
+            next_cursor: None,
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        cx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let context = ToolCallContext::new(self, request, cx);
+        self.tool_router.call(context).await
     }
 }
 

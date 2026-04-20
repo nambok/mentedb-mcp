@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.12](https://github.com/nambok/mentedb-mcp/compare/v0.4.11...v0.4.12) - 2026-04-20
+
+### Added
+
+- feature-flag local mode, cloud-only binary drops from 16MB to 5MB
+- cloud-first MCP server, no local database by default
+
+### Fixed
+
+- collapse nested if to satisfy clippy collapsible_if lint
+
 ## [0.4.11](https://github.com/nambok/mentedb-mcp/compare/v0.4.10...v0.4.11) - 2026-04-19
 
 ### Fixed

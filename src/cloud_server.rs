@@ -114,6 +114,8 @@ impl CloudMenteDbServer {
             "user_message": req.user_message,
             "assistant_response": req.assistant_response.unwrap_or_default(),
             "turn_id": req.turn_id,
+            "project_context": req.project_context,
+            "agent_id": req.agent_id,
         });
 
         match self.client.call_tool("process_turn", args).await {
@@ -173,6 +175,8 @@ impl CloudMenteDbServer {
     ) -> Result<CallToolResult, McpError> {
         let args = serde_json::json!({
             "query": req.query,
+            "limit": req.limit,
+            "memory_type": req.memory_type,
         });
 
         match self.client.call_tool("search_memories", args).await {
@@ -201,6 +205,7 @@ impl CloudMenteDbServer {
     ) -> Result<CallToolResult, McpError> {
         let args = serde_json::json!({
             "id": req.id,
+            "reason": req.reason,
         });
 
         match self.client.call_tool("forget_memory", args).await {

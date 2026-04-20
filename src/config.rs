@@ -13,7 +13,6 @@ pub fn resolve_data_dir(raw: &str) -> PathBuf {
 /// Server configuration parsed from CLI arguments and environment.
 #[cfg(feature = "local")]
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ServerConfig {
     /// Path to the MenteDB data directory.
     pub data_dir: PathBuf,

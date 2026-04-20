@@ -79,31 +79,36 @@ pub struct MenteDbServer {
     /// LLM-powered cognitive service for contradiction verification,
     /// entity resolution, and topic canonicalization.
     cognitive_llm: Option<Arc<CognitiveLlmService<ExtractionLlmJudge>>>,
-    #[allow(dead_code)]
+    /// True when Candle embedding model failed to load and hash fallback is active.
+    using_hash_fallback: bool,
     config: ServerConfig,
-    #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
 }
 
 impl MenteDbServer {
     pub fn new(db: MenteDb, config: ServerConfig) -> Self {
-        let embedding_provider: Arc<dyn EmbeddingProvider> = match CandleEmbeddingProvider::new() {
-            Ok(provider) => {
-                tracing::info!(
-                    model = provider.model_name(),
-                    dimensions = provider.dimensions(),
-                    "Using local Candle embeddings"
-                );
-                Arc::new(provider)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to load Candle model, falling back to hash embeddings"
-                );
-                Arc::new(HashEmbeddingProvider::new(config.embedding_dim))
-            }
-        };
+        let (embedding_provider, using_hash_fallback): (Arc<dyn EmbeddingProvider>, bool) =
+            match CandleEmbeddingProvider::new() {
+                Ok(provider) => {
+                    tracing::info!(
+                        model = provider.model_name(),
+                        dimensions = provider.dimensions(),
+                        "Using local Candle embeddings"
+                    );
+                    (Arc::new(provider), false)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to load Candle model, falling back to hash embeddings. \
+                         Search results will be unreliable."
+                    );
+                    (
+                        Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
+                        true,
+                    )
+                }
+            };
         let full_tools = config.full_tools;
         let mut tool_router = Self::tool_router_memory()
             + Self::tool_router_graph()
@@ -215,6 +220,7 @@ impl MenteDbServer {
             speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5, 0.6))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             cognitive_llm,
+            using_hash_fallback,
             config,
             tool_router,
         }
@@ -428,5 +434,3 @@ pub(crate) fn store_extraction_results(
 
     Ok(stored_ids)
 }
-
-

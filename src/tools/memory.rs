@@ -139,6 +139,13 @@ impl MenteDbServer {
         }
 
         let k = req.limit.unwrap_or(10);
+
+        if self.using_hash_fallback {
+            tracing::warn!(
+                "Search results may be unreliable: embedding model failed to load, using hash fallback"
+            );
+        }
+
         let embedding = self
             .embedding_provider
             .embed(&req.query)

@@ -91,7 +91,11 @@ impl CloudMenteDbServer {
         }
     }
 
-    async fn proxy_tool(&self, name: &str, args: serde_json::Value) -> Result<CallToolResult, McpError> {
+    async fn proxy_tool(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<CallToolResult, McpError> {
         match self.client.call_tool(name, args).await {
             Ok(resp) => {
                 let text = resp
@@ -123,7 +127,11 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<ProcessTurnRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.proxy_tool("process_turn", serde_json::to_value(&req).unwrap_or_default()).await
+        self.proxy_tool(
+            "process_turn",
+            serde_json::to_value(&req).unwrap_or_default(),
+        )
+        .await
     }
 
     #[rmcp::tool(
@@ -133,7 +141,11 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<StoreMemoryRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.proxy_tool("store_memory", serde_json::to_value(&req).unwrap_or_default()).await
+        self.proxy_tool(
+            "store_memory",
+            serde_json::to_value(&req).unwrap_or_default(),
+        )
+        .await
     }
 
     #[rmcp::tool(
@@ -143,7 +155,11 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<SearchMemoriesRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.proxy_tool("search_memories", serde_json::to_value(&req).unwrap_or_default()).await
+        self.proxy_tool(
+            "search_memories",
+            serde_json::to_value(&req).unwrap_or_default(),
+        )
+        .await
     }
 
     #[rmcp::tool(
@@ -153,7 +169,11 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<ForgetMemoryRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.proxy_tool("forget_memory", serde_json::to_value(&req).unwrap_or_default()).await
+        self.proxy_tool(
+            "forget_memory",
+            serde_json::to_value(&req).unwrap_or_default(),
+        )
+        .await
     }
 }
 

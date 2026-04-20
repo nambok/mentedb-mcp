@@ -3,17 +3,7 @@ use super::*;
 #[rmcp::tool_handler]
 impl ServerHandler for MenteDbServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_resources()
-                .build(),
-        )
-        .with_server_info(Implementation::new(
-            "mentedb-mcp",
-            env!("CARGO_PKG_VERSION"),
-        ))
-        .with_instructions(
+        let mut instructions = String::from(
             "MenteDB gives you persistent memory across sessions. You have 4 tools:\n\
              \n\
              1. process_turn — Call on EVERY turn. Pass user_message + assistant_response (can be empty). Returns past context, stores the turn, detects contradictions.\n\
@@ -26,7 +16,26 @@ impl ServerHandler for MenteDbServer {
              QUALITY: One fact per memory. Self-contained. Include project context. Under 200 words. Don't store chitchat, temp info, or large code blocks.\n\
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
              If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
+        );
+
+        if self.using_hash_fallback {
+            instructions.push_str(
+                "\n\nWARNING: Embedding model failed to load. Using hash-based fallback. \
+                 Search results and context retrieval may be unreliable.",
+            );
+        }
+
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
         )
+        .with_server_info(Implementation::new(
+            "mentedb-mcp",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(&instructions)
     }
 
     async fn list_resources(

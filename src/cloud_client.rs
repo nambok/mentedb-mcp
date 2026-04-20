@@ -24,8 +24,7 @@ pub struct ToolCallResponse {
 #[derive(Deserialize)]
 pub struct ToolContent {
     #[serde(rename = "type")]
-    #[allow(dead_code)]
-    pub content_type: String,
+    pub _content_type: String,
     pub text: String,
 }
 

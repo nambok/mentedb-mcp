@@ -19,6 +19,12 @@ impl MenteDbServer {
 
         let start = std::time::Instant::now();
 
+        if self.using_hash_fallback {
+            tracing::warn!(
+                "Context retrieval may be unreliable: embedding model failed to load, using hash fallback"
+            );
+        }
+
         // 1. Search for relevant context based on user message
         let query_embedding = self
             .embedding_provider

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.24](https://github.com/nambok/mentedb-mcp/compare/v0.4.23...v0.4.24) - 2026-04-20
+
+### Added
+
+- migrate MCP from O(n) recall_all_memories to HNSW retrieval ([#62](https://github.com/nambok/mentedb-mcp/pull/62))
+- remove Mutex — use Arc<MenteDb> with interior mutability
+
 ## [0.4.23](https://github.com/nambok/mentedb-mcp/compare/v0.4.22...v0.4.23) - 2026-04-20
 
 ### Fixed

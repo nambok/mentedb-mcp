@@ -16,6 +16,24 @@ impl MenteDbServer {
             .filter_map(|ci| {
                 let content = ci.get("content").and_then(|c| c.as_str())?;
                 let id = ci.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                let memory_type = ci
+                    .get("memory_type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("unknown");
+                let scope = ci
+                    .get("tags")
+                    .and_then(|t| t.as_array())
+                    .and_then(|tags| {
+                        tags.iter().find_map(|t| {
+                            let s = t.as_str()?;
+                            if s == "scope:always" {
+                                Some("always")
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or("contextual");
                 let truncated = if content.len() > CTX_MAX_CHARS {
                     format!(
                         "{}…",
@@ -24,7 +42,12 @@ impl MenteDbServer {
                 } else {
                     content.to_string()
                 };
-                Some(json!({ "id": id, "summary": truncated }))
+                Some(json!({
+                    "id": id,
+                    "content": truncated,
+                    "memory_type": memory_type,
+                    "scope": scope
+                }))
             })
             .collect();
 

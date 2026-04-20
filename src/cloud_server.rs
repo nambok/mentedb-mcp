@@ -49,6 +49,10 @@ pub struct StoreMemoryRequest {
     pub memory_type: String,
     #[schemars(description = "Optional tags for categorization")]
     pub tags: Option<Vec<String>>,
+    #[schemars(
+        description = "Memory scope: 'contextual' (default) = retrieved by semantic similarity. 'always' = returned on every process_turn call, regardless of conversation topic."
+    )]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -140,6 +144,7 @@ impl CloudMenteDbServer {
             "content": req.content,
             "memory_type": req.memory_type,
             "tags": req.tags.unwrap_or_default(),
+            "scope": req.scope,
         });
 
         match self.client.call_tool("store_memory", args).await {
@@ -229,10 +234,11 @@ impl ServerHandler for CloudMenteDbServer {
             "MenteDB gives you persistent memory across sessions. You have 4 tools:\n\
              \n\
              1. process_turn — Call on EVERY turn. Pass user_message + assistant_response (can be empty). Returns past context, stores the turn, detects contradictions.\n\
-             2. store_memory — Save important facts (preferences, decisions, corrections). Add type + tags.\n\
+             2. store_memory — Save important facts (preferences, decisions, corrections). Add type + tags. Use scope: 'always' for critical rules that must be surfaced every turn (e.g. 'never do X').\n\
              3. search_memories — Look up what you know. Pass a query OR a memory UUID for full content.\n\
-             4. forget_memory — Delete a memory when the user asks to forget.\n\
+             4. forget_memory — Delete a memory when the user says 'forget' or 'don't remember that'.\n\
              \n\
+             SCOPE: When a user says 'always remember this' or stores a critical rule/constraint, set scope: 'always'. These memories are returned on every process_turn regardless of topic.\n\
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
              If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
         )

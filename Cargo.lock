@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "mentedb-mcp"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "anyhow",
  "axum",

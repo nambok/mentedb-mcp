@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.14](https://github.com/nambok/mentedb-mcp/compare/v0.4.13...v0.4.14) - 2026-04-20
+
+### Other
+
+- use node 22 in npm-publish workflow
+
 ## [0.4.12](https://github.com/nambok/mentedb-mcp/compare/v0.4.11...v0.4.12) - 2026-04-20
 
 ### Added

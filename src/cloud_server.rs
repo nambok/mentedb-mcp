@@ -9,13 +9,13 @@ use rmcp::model::*;
 use rmcp::service::RequestContext;
 use rmcp::transport::io::stdio;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cloud_client::CloudClient;
 
 // -- Request types (match the cloud API's expected arguments) --
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ProcessTurnRequest {
     #[schemars(
         description = "The user's message or question from this turn. Used for context retrieval and memory extraction."
@@ -32,14 +32,12 @@ pub struct ProcessTurnRequest {
     #[schemars(
         description = "Current project or workspace name for scoping memories, e.g. 'mentedb-mcp' or 'my-app'."
     )]
-    #[allow(dead_code)]
     pub project_context: Option<String>,
     #[schemars(description = "Optional agent UUID. Defaults to nil UUID if not provided.")]
-    #[allow(dead_code)]
     pub agent_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct StoreMemoryRequest {
     #[schemars(description = "The text content of the memory to store")]
     pub content: String,
@@ -55,28 +53,25 @@ pub struct StoreMemoryRequest {
     pub scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SearchMemoriesRequest {
     #[schemars(
         description = "Search query text for semantic search, OR a memory UUID to get full content by ID"
     )]
     pub query: String,
     #[schemars(description = "Maximum number of results to return (default: 10)")]
-    #[allow(dead_code)]
     pub limit: Option<usize>,
     #[schemars(
         description = "Optional memory type filter: episodic, semantic, procedural, anti_pattern, reasoning, correction"
     )]
-    #[allow(dead_code)]
     pub memory_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ForgetMemoryRequest {
     #[schemars(description = "UUID of the memory to delete")]
     pub id: String,
     #[schemars(description = "Optional reason for deletion")]
-    #[allow(dead_code)]
     pub reason: Option<String>,
 }
 
@@ -95,6 +90,24 @@ impl CloudMenteDbServer {
             tool_router,
         }
     }
+
+    async fn proxy_tool(&self, name: &str, args: serde_json::Value) -> Result<CallToolResult, McpError> {
+        match self.client.call_tool(name, args).await {
+            Ok(resp) => {
+                let text = resp
+                    .content
+                    .first()
+                    .map(|c| c.text.clone())
+                    .unwrap_or_default();
+                if resp.is_error {
+                    error_result(&text)
+                } else {
+                    Ok(CallToolResult::success(vec![Content::text(text)]))
+                }
+            }
+            Err(e) => error_result(&e),
+        }
+    }
 }
 
 fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
@@ -110,29 +123,7 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<ProcessTurnRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::json!({
-            "user_message": req.user_message,
-            "assistant_response": req.assistant_response.unwrap_or_default(),
-            "turn_id": req.turn_id,
-            "project_context": req.project_context,
-            "agent_id": req.agent_id,
-        });
-
-        match self.client.call_tool("process_turn", args).await {
-            Ok(resp) => {
-                let text = resp
-                    .content
-                    .first()
-                    .map(|c| c.text.clone())
-                    .unwrap_or_default();
-                if resp.is_error {
-                    error_result(&text)
-                } else {
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
-                }
-            }
-            Err(e) => error_result(&e),
-        }
+        self.proxy_tool("process_turn", serde_json::to_value(&req).unwrap_or_default()).await
     }
 
     #[rmcp::tool(
@@ -142,28 +133,7 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<StoreMemoryRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::json!({
-            "content": req.content,
-            "memory_type": req.memory_type,
-            "tags": req.tags.unwrap_or_default(),
-            "scope": req.scope,
-        });
-
-        match self.client.call_tool("store_memory", args).await {
-            Ok(resp) => {
-                let text = resp
-                    .content
-                    .first()
-                    .map(|c| c.text.clone())
-                    .unwrap_or_default();
-                if resp.is_error {
-                    error_result(&text)
-                } else {
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
-                }
-            }
-            Err(e) => error_result(&e),
-        }
+        self.proxy_tool("store_memory", serde_json::to_value(&req).unwrap_or_default()).await
     }
 
     #[rmcp::tool(
@@ -173,27 +143,7 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<SearchMemoriesRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::json!({
-            "query": req.query,
-            "limit": req.limit,
-            "memory_type": req.memory_type,
-        });
-
-        match self.client.call_tool("search_memories", args).await {
-            Ok(resp) => {
-                let text = resp
-                    .content
-                    .first()
-                    .map(|c| c.text.clone())
-                    .unwrap_or_default();
-                if resp.is_error {
-                    error_result(&text)
-                } else {
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
-                }
-            }
-            Err(e) => error_result(&e),
-        }
+        self.proxy_tool("search_memories", serde_json::to_value(&req).unwrap_or_default()).await
     }
 
     #[rmcp::tool(
@@ -203,26 +153,7 @@ impl CloudMenteDbServer {
         &self,
         Parameters(req): Parameters<ForgetMemoryRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::json!({
-            "id": req.id,
-            "reason": req.reason,
-        });
-
-        match self.client.call_tool("forget_memory", args).await {
-            Ok(resp) => {
-                let text = resp
-                    .content
-                    .first()
-                    .map(|c| c.text.clone())
-                    .unwrap_or_default();
-                if resp.is_error {
-                    error_result(&text)
-                } else {
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
-                }
-            }
-            Err(e) => error_result(&e),
-        }
+        self.proxy_tool("forget_memory", serde_json::to_value(&req).unwrap_or_default()).await
     }
 }
 

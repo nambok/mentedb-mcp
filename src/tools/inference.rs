@@ -77,28 +77,20 @@ impl MenteDbServer {
         };
 
         let db = &*self.db;
-        let target_memory = match find_memory_by_id(&db, target_id) {
+        let target_memory = match find_memory_by_id(db, target_id) {
             Ok(Some(sm)) => sm.memory,
             Ok(None) => return error_result(&format!("Memory not found: {target_id}")),
             Err(e) => return error_result(&format!("Failed to fetch memory: {e}")),
         };
 
-        // Gather nearby memories via similarity search for comparison
+        // Gather nearby memories via HNSW similarity search for comparison
         let similar_ids = db
             .recall_similar(&target_memory.embedding, 20)
             .unwrap_or_default();
-        let all_memories = recall_all_memories(&db);
-        let existing: Vec<MemoryNode> = similar_ids
-            .iter()
-            .filter_map(|(id, _)| {
-                if *id == MemoryId(target_id) {
-                    return None;
-                }
-                all_memories
-                    .iter()
-                    .find(|sm| sm.memory.id == *id)
-                    .map(|sm| sm.memory.clone())
-            })
+        let existing: Vec<MemoryNode> = resolve_memory_ids(db, &similar_ids)
+            .into_iter()
+            .filter(|sm| sm.memory.id != MemoryId(target_id))
+            .map(|sm| sm.memory)
             .collect();
 
         let engine = WriteInferenceEngine::new();

@@ -168,7 +168,7 @@ impl MenteDbServer {
             return error_result(&format!("Target memory not found in graph: {to_id}"));
         }
 
-        match shortest_path(&*csr, from_mem, to_mem) {
+        match shortest_path(&csr, from_mem, to_mem) {
             Some(path) => {
                 let path_strs: Vec<String> = path.iter().map(|id| id.to_string()).collect();
                 tracing::info!(from = %from_id, to = %to_id, hops = path.len() - 1, "path found");
@@ -218,7 +218,7 @@ impl MenteDbServer {
             return error_result(&format!("Center memory not found in graph: {center_id}"));
         }
 
-        let (nodes, edges) = extract_subgraph(&*csr, center_mem, radius);
+        let (nodes, edges) = extract_subgraph(&csr, center_mem, radius);
 
         let nodes_json: Vec<String> = nodes.iter().map(|id| id.to_string()).collect();
         let edges_json: Vec<serde_json::Value> = edges
@@ -273,7 +273,7 @@ impl MenteDbServer {
             return error_result(&format!("Memory not found in graph: {id}"));
         }
 
-        let contradictions = find_contradictions(&*csr, mem_id);
+        let contradictions = find_contradictions(&csr, mem_id);
         let ids: Vec<String> = contradictions.iter().map(|c| c.to_string()).collect();
 
         tracing::info!(id = %id, contradictions = contradictions.len(), "contradictions found");
@@ -325,7 +325,7 @@ impl MenteDbServer {
         // Persist updated confidence values
         let db = &*self.db;
         for (mid, conf) in &affected {
-            if let Ok(Some(sm)) = find_memory_by_id(&db, mid.0) {
+            if let Ok(Some(sm)) = find_memory_by_id(db, mid.0) {
                 let mut updated = sm.memory.clone();
                 updated.confidence = *conf;
                 let _ = db.store(updated);

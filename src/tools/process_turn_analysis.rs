@@ -54,8 +54,7 @@ impl MenteDbServer {
         if detected_actions.is_empty() {
             return Vec::new();
         }
-        let db_lock = &*self.db;
-        let all_mems = recall_all_memories(&db_lock);
+        let db = &*self.db;
 
         let mut proactive_recalls = Vec::new();
         for action in detected_actions {
@@ -68,23 +67,18 @@ impl MenteDbServer {
                 _ => continue,
             };
             if let Ok(action_emb) = self.embedding_provider.embed(search_query) {
-                let mut scored: Vec<(f32, &ScoredMemory)> = all_mems
+                let similar_ids = db.recall_similar(&action_emb, 3).unwrap_or_default();
+                let results = resolve_memory_ids(db, &similar_ids);
+                let top: Vec<serde_json::Value> = results
                     .iter()
-                    .map(|sm| (cosine_similarity(&action_emb, &sm.memory.embedding), sm))
-                    .filter(|(sim, _)| *sim > 0.4)
-                    .collect();
-                scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-                let top: Vec<serde_json::Value> = scored
-                    .iter()
-                    .take(3)
-                    .map(|(score, sm)| {
+                    .map(|sm| {
                         let content = &sm.memory.content;
                         let truncated = if content.len() > 200 {
                             format!("{}...", &content[..content.floor_char_boundary(200)])
                         } else {
                             content.clone()
                         };
-                        json!({"id": sm.memory.id.to_string(), "score": score, "summary": truncated})
+                        json!({"id": sm.memory.id.to_string(), "score": sm.score, "summary": truncated})
                     })
                     .collect();
                 if !top.is_empty() {
@@ -146,12 +140,12 @@ impl MenteDbServer {
         }
         let ap_id = ap_node.id;
         let db = &*self.db;
-        let result = if db.store(ap_node).is_ok() {
+
+        if db.store(ap_node).is_ok() {
             Some(ap_id.to_string())
         } else {
             None
-        };
-        result
+        }
     }
 
     /// Compute a simple keyword-based sentiment score in [-1, 1].
@@ -360,31 +354,22 @@ impl MenteDbServer {
             return;
         }
         let embed_provider = Arc::clone(&self.embedding_provider);
-        let db_lock = &*self.db;
-        let all_memories = recall_all_memories(&db_lock);
+        let db = &*self.db;
 
         let mut cache = self.speculative_cache.lock().await;
         cache.pre_assemble(predictions.to_vec(), |topic| {
             let topic_emb = embed_provider.embed(topic).ok()?;
-            let mut scored: Vec<(f32, &ScoredMemory)> = all_memories
-                .iter()
-                .map(|sm| {
-                    let sim = cosine_similarity(&topic_emb, &sm.memory.embedding);
-                    (sim, sm)
-                })
-                .filter(|(sim, _)| *sim > 0.3)
-                .collect();
-            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            let top: Vec<&ScoredMemory> = scored.iter().take(5).map(|(_, sm)| *sm).collect();
-            if top.is_empty() {
+            let similar_ids = db.recall_similar(&topic_emb, 5).ok()?;
+            let results = resolve_memory_ids(db, &similar_ids);
+            if results.is_empty() {
                 return None;
             }
-            let context_text = top
+            let context_text = results
                 .iter()
                 .map(|sm| sm.memory.content.as_str())
                 .collect::<Vec<_>>()
                 .join("\n---\n");
-            let memory_ids: Vec<MemoryId> = top.iter().map(|sm| sm.memory.id).collect();
+            let memory_ids: Vec<MemoryId> = results.iter().map(|sm| sm.memory.id).collect();
             Some((context_text, memory_ids, None))
         });
         drop(cache);
@@ -409,7 +394,7 @@ impl MenteDbServer {
                 .unwrap_or_default()
                 .as_micros() as u64;
             let db = &*self.db;
-            let all = recall_all_memories(&db);
+            let all = recall_all_memories(db);
             let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             decay_engine.apply_decay_batch(&mut memories, now);
             for mem in &memories {
@@ -431,7 +416,7 @@ impl MenteDbServer {
                 .unwrap_or_default()
                 .as_micros() as u64;
             let db = &*self.db;
-            let all = recall_all_memories(&db);
+            let all = recall_all_memories(db);
             let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             let decisions = pipeline.evaluate_batch(&memories, now);
             let mut archived = 0u64;
@@ -450,7 +435,7 @@ impl MenteDbServer {
         // Every 200 turns: consolidate similar memories
         if turn_id.is_multiple_of(200) {
             let db = &*self.db;
-            let all = recall_all_memories(&db);
+            let all = recall_all_memories(db);
             let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             if memories.len() >= 2 {
                 let consolidation_engine = ConsolidationEngine::new();

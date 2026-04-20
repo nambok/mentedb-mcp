@@ -26,7 +26,7 @@ impl MenteDbServer {
                 let scored_memories: Vec<ScoredMemory> = results
                     .iter()
                     .filter_map(|(id, score)| {
-                        find_memory_by_id(&db, id.0)
+                        find_memory_by_id(db, id.0)
                             .ok()
                             .flatten()
                             .map(|sm| ScoredMemory {

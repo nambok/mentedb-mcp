@@ -175,7 +175,7 @@ impl MenteDbServer {
                 Ok(id) => id,
                 Err(e) => return error_result(&e),
             };
-            match find_memory_by_id(&db, id) {
+            match find_memory_by_id(db, id) {
                 Ok(Some(sm)) => memories.push(sm.memory),
                 Ok(None) => {
                     return error_result(&format!("Memory not found: {id}"));

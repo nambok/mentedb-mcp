@@ -155,7 +155,9 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("It's designed to be launched by an MCP client, not run directly.");
         eprintln!();
         eprintln!("Quick start:");
-        eprintln!("  mentedb-mcp setup     Set up MenteDB in your editor (Copilot CLI, Cursor, etc.)");
+        eprintln!(
+            "  mentedb-mcp setup     Set up MenteDB in your editor (Copilot CLI, Cursor, etc.)"
+        );
         eprintln!("  mentedb-mcp login     Authenticate with MenteDB Cloud");
         eprintln!("  mentedb-mcp status    Check connection and configuration");
         eprintln!();

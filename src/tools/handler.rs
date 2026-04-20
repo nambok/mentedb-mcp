@@ -62,7 +62,7 @@ impl ServerHandler for MenteDbServer {
         let uri_str = uri.as_str();
 
         if uri_str == "mentedb://stats" {
-            let db = self.db.lock().await;
+            let db = &*self.db;
             let memory_count = db.memory_count();
             let stats = json!({
                 "status": "operational",
@@ -172,7 +172,7 @@ impl ServerHandler for MenteDbServer {
                 )
             })?;
 
-            let mut db = self.db.lock().await;
+            let db = &*self.db;
             match db.get_memory(MemoryId(id)) {
                 Ok(mem) => {
                     let result = memory_node_to_json(&mem);

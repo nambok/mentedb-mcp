@@ -76,8 +76,8 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut db = self.db.lock().await;
-        let target_memory = match find_memory_by_id(&mut db, target_id) {
+        let db = &*self.db;
+        let target_memory = match find_memory_by_id(&db, target_id) {
             Ok(Some(sm)) => sm.memory,
             Ok(None) => return error_result(&format!("Memory not found: {target_id}")),
             Err(e) => return error_result(&format!("Failed to fetch memory: {e}")),
@@ -87,7 +87,7 @@ impl MenteDbServer {
         let similar_ids = db
             .recall_similar(&target_memory.embedding, 20)
             .unwrap_or_default();
-        let all_memories = recall_all_memories(&mut db);
+        let all_memories = recall_all_memories(&db);
         let existing: Vec<MemoryNode> = similar_ids
             .iter()
             .filter_map(|(id, _)| {
@@ -126,6 +126,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;
@@ -148,6 +149,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;
@@ -171,6 +173,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     applied += 1;

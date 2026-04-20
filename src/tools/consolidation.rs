@@ -12,8 +12,8 @@ impl MenteDbServer {
         let min_cluster_size = req.min_cluster_size.unwrap_or(2);
         let similarity_threshold = req.similarity_threshold.unwrap_or(0.85);
 
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all = recall_all_memories(&db);
         let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
 
         if memories.is_empty() {
@@ -99,8 +99,8 @@ impl MenteDbServer {
             .unwrap_or_default()
             .as_micros() as u64;
 
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all = recall_all_memories(&db);
         let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
         let total = memories.len();
 
@@ -148,8 +148,8 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut db = self.db.lock().await;
-        match find_memory_by_id(&mut db, id) {
+        let db = &*self.db;
+        match find_memory_by_id(&db, id) {
             Ok(Some(sm)) => {
                 let compressor = MemoryCompressor::new();
                 let compressed = compressor.compress(&sm.memory);
@@ -208,8 +208,8 @@ impl MenteDbServer {
             .unwrap_or_default()
             .as_micros() as u64;
 
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all = recall_all_memories(&db);
         let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
 
         let decisions = pipeline.evaluate_batch(&memories, now);
@@ -274,14 +274,14 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut db = self.db.lock().await;
-        match find_memory_by_id(&mut db, id) {
+        let db = &*self.db;
+        match find_memory_by_id(&db, id) {
             Ok(Some(sm)) => {
                 let extractor = FactExtractor::new();
                 let facts = extractor.extract_facts(&sm.memory);
 
                 // Store extracted facts as Related edges to matching memories
-                let all_memories = recall_all_memories(&mut db);
+                let all_memories = recall_all_memories(&db);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -301,6 +301,7 @@ impl MenteDbServer {
                                 created_at: now,
                                 valid_from: None,
                                 valid_until: None,
+                                label: None,
                             };
                             let _ = db.relate(edge);
                             edges_created += 1;
@@ -355,8 +356,8 @@ impl MenteDbServer {
             .unwrap_or_default()
             .as_micros() as u64;
 
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all = recall_all_memories(&db);
         let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
 
         let forget_request = ForgetRequest {

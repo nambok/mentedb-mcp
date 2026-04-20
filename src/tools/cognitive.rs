@@ -168,14 +168,14 @@ impl MenteDbServer {
         let threshold = req.similarity_threshold.unwrap_or(0.8);
         let detector = InterferenceDetector::new(threshold);
 
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         let mut memories: Vec<MemoryNode> = Vec::new();
         for id_str in &req.memory_ids {
             let id = match parse_uuid(id_str) {
                 Ok(id) => id,
                 Err(e) => return error_result(&e),
             };
-            match find_memory_by_id(&mut db, id) {
+            match find_memory_by_id(&db, id) {
                 Ok(Some(sm)) => memories.push(sm.memory),
                 Ok(None) => {
                     return error_result(&format!("Memory not found: {id}"));

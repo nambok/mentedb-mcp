@@ -56,8 +56,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             tracing::info!("Received Ctrl+C — flushing database");
         }
 
-        let mut db = db_ref_signal.lock().await;
-        if let Err(e) = db.close() {
+        if let Err(e) = db_ref_signal.close() {
             tracing::error!(error = %e, "Failed to close database on signal");
         } else {
             tracing::info!("Database flushed on signal");
@@ -76,8 +75,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     // Graceful shutdown: flush indexes, graph, and WAL to disk
     tracing::info!("Shutting down — flushing database to disk");
-    let mut db = db_ref.lock().await;
-    if let Err(e) = db.close() {
+    if let Err(e) = db_ref.close() {
         tracing::error!(error = %e, "Failed to close database cleanly");
     } else {
         tracing::info!("Database closed cleanly");

@@ -65,7 +65,7 @@ impl MenteDbServer {
         }
 
         let id = node.id;
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         match db.store(node) {
             Ok(()) => {
                 tracing::info!(id = %id, memory_type = %req.memory_type, "memory stored");
@@ -92,8 +92,8 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut db = self.db.lock().await;
-        match find_memory_by_id(&mut db, id) {
+        let db = &*self.db;
+        match find_memory_by_id(&db, id) {
             Ok(Some(sm)) => {
                 tracing::info!(id = %id, "memory recalled");
                 Ok(CallToolResult::success(vec![Content::text(
@@ -120,8 +120,8 @@ impl MenteDbServer {
     ) -> Result<CallToolResult, McpError> {
         // If the query looks like a UUID, do a direct ID lookup
         if let Ok(uuid) = Uuid::parse_str(req.query.trim()) {
-            let mut db = self.db.lock().await;
-            if let Ok(Some(mem)) = find_memory_by_id(&mut db, uuid) {
+            let db = &*self.db;
+            if let Ok(Some(mem)) = find_memory_by_id(&db, uuid) {
                 return Ok(CallToolResult::success(vec![Content::text(
                     json!({
                         "id": uuid.to_string(),
@@ -158,7 +158,7 @@ impl MenteDbServer {
             None => None,
         };
 
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         // Fetch extra candidates when filtering by type since some will be excluded
         let fetch_k = if type_filter.is_some() { k * 3 } else { k };
         match db.recall_similar(&embedding, fetch_k) {
@@ -166,7 +166,7 @@ impl MenteDbServer {
                 tracing::info!(query = %req.query, k = k, results = results.len(), "search completed");
                 let mut items: Vec<serde_json::Value> = Vec::new();
                 for (id, score) in &results {
-                    if let Ok(Some(mem)) = find_memory_by_id(&mut db, id.0) {
+                    if let Ok(Some(mem)) = find_memory_by_id(&db, id.0) {
                         if let Some(ref tf) = type_filter
                             && mem.memory.memory_type != *tf
                         {
@@ -222,8 +222,8 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut db = self.db.lock().await;
-        match find_memory_by_id(&mut db, id) {
+        let db = &*self.db;
+        match find_memory_by_id(&db, id) {
             Ok(Some(sm)) => {
                 tracing::info!(id = %id, "memory retrieved");
                 Ok(CallToolResult::success(vec![Content::text(
@@ -257,7 +257,7 @@ impl MenteDbServer {
             tracing::info!(id = %id, reason = %reason, "forgetting memory");
         }
 
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         match db.forget(MemoryId(id)) {
             Ok(()) => {
                 tracing::info!(id = %id, "memory forgotten");
@@ -288,8 +288,8 @@ impl MenteDbServer {
         let reason = req.reason.as_deref().unwrap_or("user requested reset");
         tracing::warn!(reason = %reason, "forgetting ALL memories");
 
-        let mut db = self.db.lock().await;
-        let all = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all = recall_all_memories(&db);
         let total = all.len();
         let mut forgotten = 0u64;
         let mut errors = 0u64;

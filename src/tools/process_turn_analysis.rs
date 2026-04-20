@@ -54,9 +54,8 @@ impl MenteDbServer {
         if detected_actions.is_empty() {
             return Vec::new();
         }
-        let mut db_lock = self.db.lock().await;
-        let all_mems = recall_all_memories(&mut db_lock);
-        drop(db_lock);
+        let db_lock = &*self.db;
+        let all_mems = recall_all_memories(&db_lock);
 
         let mut proactive_recalls = Vec::new();
         for action in detected_actions {
@@ -146,13 +145,12 @@ impl MenteDbServer {
             ap_node.tags.push(format!("scope:project:{}", ctx));
         }
         let ap_id = ap_node.id;
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         let result = if db.store(ap_node).is_ok() {
             Some(ap_id.to_string())
         } else {
             None
         };
-        drop(db);
         result
     }
 
@@ -345,9 +343,8 @@ impl MenteDbServer {
             if let Some(ctx) = &req.project_context {
                 ghost_node.tags.push(format!("scope:project:{}", ctx));
             }
-            let mut db = self.db.lock().await;
+            let db = &*self.db;
             let _ = db.store(ghost_node);
-            drop(db);
             tracing::debug!(
                 turn_id = req.turn_id,
                 "stored ghost memory from speculative content"
@@ -363,9 +360,8 @@ impl MenteDbServer {
             return;
         }
         let embed_provider = Arc::clone(&self.embedding_provider);
-        let mut db_lock = self.db.lock().await;
-        let all_memories = recall_all_memories(&mut db_lock);
-        drop(db_lock);
+        let db_lock = &*self.db;
+        let all_memories = recall_all_memories(&db_lock);
 
         let mut cache = self.speculative_cache.lock().await;
         cache.pre_assemble(predictions.to_vec(), |topic| {
@@ -412,14 +408,13 @@ impl MenteDbServer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_micros() as u64;
-            let mut db = self.db.lock().await;
-            let all = recall_all_memories(&mut db);
+            let db = &*self.db;
+            let all = recall_all_memories(&db);
             let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             decay_engine.apply_decay_batch(&mut memories, now);
             for mem in &memories {
                 let _ = db.store(mem.clone());
             }
-            drop(db);
             tracing::info!(turn_id, "auto-maintenance: applied salience decay");
         }
 
@@ -435,8 +430,8 @@ impl MenteDbServer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_micros() as u64;
-            let mut db = self.db.lock().await;
-            let all = recall_all_memories(&mut db);
+            let db = &*self.db;
+            let all = recall_all_memories(&db);
             let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             let decisions = pipeline.evaluate_batch(&memories, now);
             let mut archived = 0u64;
@@ -449,14 +444,13 @@ impl MenteDbServer {
                     archived += 1;
                 }
             }
-            drop(db);
             tracing::info!(turn_id, archived, "auto-maintenance: evaluated archival");
         }
 
         // Every 200 turns: consolidate similar memories
         if turn_id.is_multiple_of(200) {
-            let mut db = self.db.lock().await;
-            let all = recall_all_memories(&mut db);
+            let db = &*self.db;
+            let all = recall_all_memories(&db);
             let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
             if memories.len() >= 2 {
                 let consolidation_engine = ConsolidationEngine::new();
@@ -491,7 +485,6 @@ impl MenteDbServer {
                     "auto-maintenance: consolidated memories"
                 );
             }
-            drop(db);
         }
     }
 }

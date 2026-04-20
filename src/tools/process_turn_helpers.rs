@@ -19,7 +19,7 @@ impl MenteDbServer {
 
         // Try cache first — resolve cached IDs directly without loading all memories
         if let Some((ref cached_ids, ref _topic)) = cache_result {
-            let mut db = self.db.lock().await;
+            let db = &*self.db;
             let matched: Vec<ScoredMemory> = cached_ids
                 .iter()
                 .filter_map(|id| {
@@ -29,7 +29,6 @@ impl MenteDbServer {
                     })
                 })
                 .collect();
-            drop(db);
 
             if matched.len() >= cached_ids.len() / 2 {
                 let ids: Vec<MemoryId> = matched.iter().map(|sm| sm.memory.id).collect();
@@ -69,7 +68,7 @@ impl MenteDbServer {
         }
 
         // Use HNSW index for similarity search instead of O(n) full scan
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         let hnsw_results = db.recall_similar(query_embedding, 10).unwrap_or_default();
         let scored: Vec<(ScoredMemory, f32)> = hnsw_results
             .into_iter()
@@ -79,7 +78,6 @@ impl MenteDbServer {
                     .map(|m| (ScoredMemory { memory: m, score }, score))
             })
             .collect();
-        drop(db);
 
         let current_ids: Vec<MemoryId> = scored.iter().map(|(sm, _)| sm.memory.id).collect();
 
@@ -156,7 +154,7 @@ impl MenteDbServer {
             node.tags.push(format!("scope:project:{}", ctx));
         }
         let id = node.id;
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         match db.store(node) {
             Ok(()) => {
                 stored_ids.push(id.to_string());
@@ -165,7 +163,6 @@ impl MenteDbServer {
                 tracing::error!(error = ?e, "process_turn: failed to store episodic turn");
             }
         }
-        drop(db);
         (stored_ids, id, conversation)
     }
 
@@ -212,12 +209,11 @@ impl MenteDbServer {
         if stored_ids.is_empty() {
             return 0;
         }
-        let mut db = self.db.lock().await;
-        let all_memories = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all_memories = recall_all_memories(&db);
         let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
 
         let Some(target) = all_nodes.iter().find(|m| m.id == id) else {
-            drop(db);
             return 0;
         };
 
@@ -242,6 +238,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     inference_applied += 1;
@@ -258,6 +255,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     inference_applied += 1;
@@ -276,6 +274,7 @@ impl MenteDbServer {
                         created_at: now,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                     inference_applied += 1;
@@ -396,7 +395,6 @@ impl MenteDbServer {
             "write inference on new memory"
         );
 
-        drop(db);
         inference_applied
     }
 
@@ -405,13 +403,12 @@ impl MenteDbServer {
         if stored_ids.is_empty() {
             return;
         }
-        let mut db = self.db.lock().await;
-        let all_memories = recall_all_memories(&mut db);
+        let db = &*self.db;
+        let all_memories = recall_all_memories(&db);
         let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
 
         let extractor = FactExtractor::new();
         let Some(target) = all_nodes.iter().find(|m| m.id == id) else {
-            drop(db);
             return;
         };
         let facts = extractor.extract_facts(target);
@@ -433,6 +430,7 @@ impl MenteDbServer {
                         created_at: now_facts,
                         valid_from: None,
                         valid_until: None,
+                        label: None,
                     };
                     let _ = db.relate(edge);
                 }
@@ -444,6 +442,5 @@ impl MenteDbServer {
                 "extracted and linked facts from new memory"
             );
         }
-        drop(db);
     }
 }

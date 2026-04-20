@@ -58,13 +58,13 @@ impl MenteDbServer {
 
         // Gather existing memories for dedup/contradiction checks
         let existing_memories = {
-            let mut db = self.db.lock().await;
+            let db = &*self.db;
             let conv_embedding = self
                 .embedding_provider
                 .embed(&req.conversation)
                 .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
             let similar = db.recall_similar(&conv_embedding, 20).unwrap_or_default();
-            let all_mems = recall_all_memories(&mut db);
+            let all_mems = recall_all_memories(&db);
             similar
                 .iter()
                 .filter_map(|(id, _)| {
@@ -103,9 +103,9 @@ impl MenteDbServer {
                 .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?
         };
 
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         let stored_ids =
-            store_extraction_results(&result, &mut db, self.embedding_provider.as_ref(), agent_id)?;
+            store_extraction_results(&result, &db, self.embedding_provider.as_ref(), agent_id)?;
 
         let stats = &result.stats;
         tracing::info!(

@@ -71,7 +71,7 @@ pub(crate) fn parse_decision_state(s: &str) -> DecisionState {
 
 /// MenteDB MCP server state holding the database and cognitive subsystems.
 pub struct MenteDbServer {
-    db: Arc<Mutex<MenteDb>>,
+    db: Arc<MenteDb>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     pain_registry: Arc<Mutex<PainRegistry>>,
     phantom_tracker: Arc<Mutex<PhantomTracker>>,
@@ -214,7 +214,7 @@ impl MenteDbServer {
         }
 
         Self {
-            db: Arc::new(Mutex::new(db)),
+            db: Arc::new(db),
             embedding_provider,
             pain_registry: Arc::new(Mutex::new(PainRegistry::new(100))),
             phantom_tracker: Arc::new(Mutex::new(PhantomTracker::new(PhantomConfig::default()))),
@@ -229,7 +229,7 @@ impl MenteDbServer {
     }
 
     /// Get a reference to the database for shutdown handling.
-    pub fn db_ref(&self) -> Arc<Mutex<MenteDb>> {
+    pub fn db_ref(&self) -> Arc<MenteDb> {
         Arc::clone(&self.db)
     }
 }
@@ -315,7 +315,7 @@ pub(crate) fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
 }
 
 /// Retrieve all memories from the database using direct page_map access.
-pub(crate) fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
+pub(crate) fn recall_all_memories(db: &MenteDb) -> Vec<ScoredMemory> {
     db.memory_ids()
         .into_iter()
         .filter_map(|id| {
@@ -328,7 +328,7 @@ pub(crate) fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
 
 /// Find a specific memory by UUID using direct page_map lookup.
 pub(crate) fn find_memory_by_id(
-    db: &mut MenteDb,
+    db: &MenteDb,
     target_id: Uuid,
 ) -> Result<Option<ScoredMemory>, String> {
     match db.get_memory(MemoryId(target_id)) {
@@ -340,7 +340,7 @@ pub(crate) fn find_memory_by_id(
 /// Store extraction results (accepted + contradictions) into the database.
 pub(crate) fn store_extraction_results(
     result: &ProcessedExtractionResult,
-    db: &mut MenteDb,
+    db: &MenteDb,
     embedding_provider: &dyn EmbeddingProvider,
     agent_id: Uuid,
 ) -> Result<Vec<String>, McpError> {

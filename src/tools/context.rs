@@ -20,13 +20,13 @@ impl MenteDbServer {
             .embed(&req.query)
             .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
 
-        let mut db = self.db.lock().await;
+        let db = &*self.db;
         match db.recall_similar(&embedding, 50) {
             Ok(results) => {
                 let scored_memories: Vec<ScoredMemory> = results
                     .iter()
                     .filter_map(|(id, score)| {
-                        find_memory_by_id(&mut db, id.0)
+                        find_memory_by_id(&db, id.0)
                             .ok()
                             .flatten()
                             .map(|sm| ScoredMemory {
@@ -88,7 +88,7 @@ impl MenteDbServer {
         description = "Get database statistics including memory count, edge count, and type breakdown."
     )]
     async fn get_stats(&self) -> Result<CallToolResult, McpError> {
-        let db = self.db.lock().await;
+        let db = &*self.db;
         let memory_count = db.memory_count();
         let result = json!({
             "status": "operational",

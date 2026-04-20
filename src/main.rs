@@ -193,6 +193,9 @@ fn auto_update_instructions() {
         None => return,
     };
 
+    let current_version = env!("CARGO_PKG_VERSION");
+    let version_marker = format!("<!-- mentedb-instructions-v{current_version} -->");
+
     let instruction_paths = [
         // Copilot CLI
         format!("{home}/.copilot/copilot-instructions.md"),
@@ -202,12 +205,44 @@ fn auto_update_instructions() {
 
     for path_str in &instruction_paths {
         let path = std::path::Path::new(path_str);
-        if path.exists() {
-            match append_instructions(path, false, false) {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "auto-update instructions failed");
-                }
+        if !path.exists() {
+            continue;
+        }
+
+        // Check if update is needed before calling append_instructions
+        let needs_update = std::fs::read_to_string(path)
+            .map(|content| !content.contains(&version_marker))
+            .unwrap_or(false);
+
+        if !needs_update {
+            continue;
+        }
+
+        let old_version = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|c| {
+                c.lines()
+                    .find(|l| l.contains("<!-- mentedb-instructions-v"))
+                    .and_then(|l| {
+                        l.trim()
+                            .strip_prefix("<!-- mentedb-instructions-v")
+                            .and_then(|s| s.strip_suffix(" -->"))
+                            .map(String::from)
+                    })
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        match append_instructions(path, false, false) {
+            Ok(()) => {
+                tracing::info!(
+                    path = %path.display(),
+                    from = %old_version,
+                    to = %current_version,
+                    "auto-updated agent instructions"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "auto-update instructions failed");
             }
         }
     }

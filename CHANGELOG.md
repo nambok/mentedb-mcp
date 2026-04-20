@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.22](https://github.com/nambok/mentedb-mcp/compare/v0.4.21...v0.4.22) - 2026-04-20
+
+### Added
+
+- show account email and plan in status command
+
 ## [0.4.21](https://github.com/nambok/mentedb-mcp/compare/v0.4.20...v0.4.21) - 2026-04-20
 
 ### Fixed

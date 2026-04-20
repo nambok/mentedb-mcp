@@ -275,21 +275,13 @@ async fn run_login() -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<String>();
     let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
-    // CORS preflight handler
-    let cors_headers = [
-        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-        (
-            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
-            "content-type",
-        ),
-        (
-            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
-            "POST, OPTIONS",
-        ),
-    ];
+    let cloud_url = std::env::var("MENTEDB_CLOUD_URL")
+        .unwrap_or_else(|_| "https://app.mentedb.com".to_string());
 
-    let cors_for_options = cors_headers.clone();
-    let cors_for_post = cors_headers;
+    // Build CORS headers with the cloud dashboard as allowed origin
+    let origin_value = axum::http::HeaderValue::from_str(&cloud_url)
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("https://app.mentedb.com"));
+    let origin_for_post = origin_value.clone();
 
     // Start local HTTP server
     let tx_clone = tx.clone();
@@ -298,6 +290,7 @@ async fn run_login() -> anyhow::Result<()> {
             "/callback",
             axum::routing::post(move |body: axum::Json<serde_json::Value>| {
                 let tx = tx_clone.clone();
+                let origin = origin_for_post.clone();
                 async move {
                     let api_key = body
                         .get("api_key")
@@ -309,9 +302,20 @@ async fn run_login() -> anyhow::Result<()> {
                         let _ = sender.send(api_key);
                     }
 
+                    let headers = [
+                        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+                        (
+                            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+                            axum::http::HeaderValue::from_static("content-type"),
+                        ),
+                        (
+                            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+                            axum::http::HeaderValue::from_static("POST, OPTIONS"),
+                        ),
+                    ];
                     (
                         axum::http::StatusCode::OK,
-                        cors_for_post.map(|(k, v)| (k, axum::http::HeaderValue::from_static(v))),
+                        headers,
                         axum::Json(serde_json::json!({"ok": true})),
                     )
                 }
@@ -319,12 +323,22 @@ async fn run_login() -> anyhow::Result<()> {
         )
         .route(
             "/callback",
-            axum::routing::options(|| async move {
-                (
-                    axum::http::StatusCode::OK,
-                    cors_for_options.map(|(k, v)| (k, axum::http::HeaderValue::from_static(v))),
-                    "",
-                )
+            axum::routing::options(move || {
+                let origin = origin_value.clone();
+                async move {
+                    let headers = [
+                        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+                        (
+                            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+                            axum::http::HeaderValue::from_static("content-type"),
+                        ),
+                        (
+                            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+                            axum::http::HeaderValue::from_static("POST, OPTIONS"),
+                        ),
+                    ];
+                    (axum::http::StatusCode::OK, headers, "")
+                }
             }),
         );
 
@@ -334,8 +348,6 @@ async fn run_login() -> anyhow::Result<()> {
     });
 
     // Open browser
-    let cloud_url = std::env::var("MENTEDB_CLOUD_URL")
-        .unwrap_or_else(|_| "https://app.mentedb.com".to_string());
     let url = format!("{cloud_url}/auth/device?callback_port={port}");
     println!("  Opening browser: {url}");
     println!("  Waiting for authorization...\n");
@@ -368,6 +380,12 @@ async fn run_login() -> anyhow::Result<()> {
 
     let config_path = mentedb_dir.join("cloud.json");
     std::fs::write(&config_path, serde_json::to_string_pretty(&cloud_config)?)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))?;
+    }
 
     server_handle.abort();
 

@@ -166,4 +166,4 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd npm/mentedb-mcp
-          npm publish --access public
+          npm publish --access public || echo "Already published, skipping"

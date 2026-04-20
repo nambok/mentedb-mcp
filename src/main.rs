@@ -235,7 +235,7 @@ Call `process_turn` on EVERY turn. Pass `user_message` and `assistant_response`.
 ## USE the returned context
 
 When `process_turn` returns:
-- **context**: Summaries with IDs from past conversations. Reference them in your response. Call `search_memories(id)` for full content.
+- **context**: Summaries with IDs from past conversations. Reference them in your response.
 - **pain_warnings**: If non-empty, WARN the user — a similar situation caused problems before.
 - **contradictions**: If > 0, flag the inconsistency.
 
@@ -261,33 +261,14 @@ When the user says "forget" or "don't remember that", delete the memory by ID.
 
 ## Scope
 
-Set `scope: 'always'` for critical rules that must be surfaced every turn regardless of topic (e.g. "never force-push to main", "always use conventional commits"). Default is `scope: 'contextual'` which is retrieved by semantic similarity.
-
-When the user says "always remember this" or states a hard rule/constraint, use `scope: 'always'`.
-
-## Memory types
-
-- **semantic**: Facts, preferences, project details ("User's timezone is PST")
-- **episodic**: What happened in a specific interaction ("Debugged OOM in prod on Jan 5")
-- **procedural**: How to do things ("To release: bump version, tag, push")
-- **correction**: Something was wrong and is now right ("API key goes in .env, not config.toml")
-- **anti_pattern**: Things to NEVER do ("Never force-push to main")
-- **reasoning**: Why a decision was made ("Chose DynamoDB over Postgres for scaling needs")
+Set `scope: 'always'` for critical rules that must be surfaced every turn regardless of topic. Default is `scope: 'contextual'` (retrieved by semantic similarity). Use `'always'` when the user says "always remember this" or states a hard rule.
 
 ## Writing good memories
 
-- One fact per memory — don't combine unrelated facts
-- Self-contained: "User prefers tabs over spaces in Python" not just "prefers tabs"
-- Include project context: "For mentedb-mcp, deploy with..." not just "deploy with..."
+- One fact per memory — self-contained with project context
 - Keep under 200 words. Summarize if needed.
-- If a fact changes, store the new version as a `correction`. The system detects contradictions automatically.
-
-## Do NOT store
-
-- Greetings, pleasantries, small talk
-- Temporary info ("the build is running right now")
-- Large code blocks verbatim — summarize the approach instead
-- Anything the user says is temporary or one-off
+- If a fact changes, store as a `correction` — contradictions are detected automatically.
+- Do NOT store: greetings, temporary info, large code blocks, one-off details
 "#;
 
 async fn run_login() -> anyhow::Result<()> {

@@ -21,8 +21,18 @@ cargo run -- --help             # Show CLI help
 
 - `src/main.rs`: Entry point, CLI args (clap), tracing setup, launches server
 - `src/server.rs`: Server lifecycle, opens MenteDb, starts stdio transport
-- `src/tools.rs`: MCP tool definitions (store, recall, search, relate, forget, etc.) and ServerHandler impl
-- `src/resources.rs`: Reserved for resource utilities
+- `src/tools/mod.rs`: MenteDbServer struct, constructor, shared helpers, combined router
+- `src/tools/types.rs`: Request/response type structs for all tools
+- `src/tools/memory.rs`: Memory CRUD tools (store, recall, search, get, forget)
+- `src/tools/graph.rs`: Knowledge graph tools (relate, get_related, find_path, subgraph, contradictions)
+- `src/tools/cognitive.rs`: Cognitive tools (pain, phantoms, trajectory, interference)
+- `src/tools/inference.rs`: Write inference and stream checking tools
+- `src/tools/consolidation.rs`: Maintenance tools (consolidate, decay, compress, archival, GDPR)
+- `src/tools/ingest.rs`: Conversation ingestion via LLM extraction
+- `src/tools/process_turn.rs`: Main per-turn pipeline (search + extract + store + infer)
+- `src/tools/context.rs`: Context assembly and stats
+- `src/tools/handler.rs`: ServerHandler impl (get_info, resources)
+- `src/cloud_server.rs`: Cloud-mode MCP server (proxies to API)
 - `src/config.rs`: Server configuration struct
 
 ## Dependencies
@@ -36,9 +46,7 @@ cargo run -- --help             # Show CLI help
 - No emojis in code, comments, or documentation
 - No dashes (em/en dash) in prose, use commas instead
 - Conventional commits: `feat:`, `fix:`, `chore:`, single line, no emojis
-- NEVER include Co-authored-by or Authored-by trailers in commits
 - All clippy warnings treated as errors
-- Git config: user.name "Nam Rodriguez", user.email "nambok@gmail.com"
 - Edition 2024
 
 ## Key Patterns

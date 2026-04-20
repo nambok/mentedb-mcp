@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.15](https://github.com/nambok/mentedb-mcp/compare/v0.4.14...v0.4.15) - 2026-04-20
+
+### Added
+
+- add scope field to memories (always vs contextual)
+
 ## [0.4.14](https://github.com/nambok/mentedb-mcp/compare/v0.4.13...v0.4.14) - 2026-04-20
 
 ### Other

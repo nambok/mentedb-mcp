@@ -141,11 +141,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Check for cloud credentials — if present, use cloud mode (HTTP proxy, no local DB).
     // This allows multiple MCP server instances to run concurrently.
-    if !cli.local {
-        if let Some((api_url, token)) = load_cloud_credentials() {
-            tracing::info!("Cloud credentials found, starting in cloud mode (no local database)");
-            return cloud_server::run(api_url, token).await;
-        }
+    if !cli.local && let Some((api_url, token)) = load_cloud_credentials() {
+        tracing::info!("Cloud credentials found, starting in cloud mode (no local database)");
+        return cloud_server::run(api_url, token).await;
     }
 
     // No cloud credentials or --local flag — fall back to local embedded database mode.

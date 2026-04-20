@@ -516,6 +516,27 @@ async fn run_status() -> anyhow::Result<()> {
                 println!("  Cloud URL: {api_url}");
                 let masked = format!("mdb_{}...", &token[4..12]);
                 println!("  Token: {masked}");
+
+                // Fetch account info
+                match client
+                    .get(format!("{api_url}/api/me"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()
+                    .await
+                {
+                    Ok(me_resp) if me_resp.status().is_success() => {
+                        if let Ok(me) = me_resp.json::<serde_json::Value>().await {
+                            if let Some(email) = me.get("email").and_then(|v| v.as_str()) {
+                                println!("  Account: {email}");
+                            }
+                            if let Some(plan) = me.get("plan").and_then(|v| v.as_str()) {
+                                println!("  Plan: {plan}");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             401 | 403 => {
                 println!("  Status: Session revoked");

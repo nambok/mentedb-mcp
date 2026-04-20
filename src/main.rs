@@ -258,6 +258,36 @@ Use proactively — if the user mentions a project, search for what you know abo
 ## forget_memory — Delete memories
 
 When the user says "forget" or "don't remember that", delete the memory by ID.
+
+## Scope
+
+Set `scope: 'always'` for critical rules that must be surfaced every turn regardless of topic (e.g. "never force-push to main", "always use conventional commits"). Default is `scope: 'contextual'` which is retrieved by semantic similarity.
+
+When the user says "always remember this" or states a hard rule/constraint, use `scope: 'always'`.
+
+## Memory types
+
+- **semantic**: Facts, preferences, project details ("User's timezone is PST")
+- **episodic**: What happened in a specific interaction ("Debugged OOM in prod on Jan 5")
+- **procedural**: How to do things ("To release: bump version, tag, push")
+- **correction**: Something was wrong and is now right ("API key goes in .env, not config.toml")
+- **anti_pattern**: Things to NEVER do ("Never force-push to main")
+- **reasoning**: Why a decision was made ("Chose DynamoDB over Postgres for scaling needs")
+
+## Writing good memories
+
+- One fact per memory — don't combine unrelated facts
+- Self-contained: "User prefers tabs over spaces in Python" not just "prefers tabs"
+- Include project context: "For mentedb-mcp, deploy with..." not just "deploy with..."
+- Keep under 200 words. Summarize if needed.
+- If a fact changes, store the new version as a `correction`. The system detects contradictions automatically.
+
+## Do NOT store
+
+- Greetings, pleasantries, small talk
+- Temporary info ("the build is running right now")
+- Large code blocks verbatim — summarize the approach instead
+- Anything the user says is temporary or one-off
 "#;
 
 async fn run_login() -> anyhow::Result<()> {

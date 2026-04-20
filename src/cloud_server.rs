@@ -235,10 +235,12 @@ impl ServerHandler for CloudMenteDbServer {
              \n\
              1. process_turn — Call on EVERY turn. Pass user_message + assistant_response (can be empty). Returns past context, stores the turn, detects contradictions.\n\
              2. store_memory — Save important facts (preferences, decisions, corrections). Add type + tags. Use scope: 'always' for critical rules that must be surfaced every turn (e.g. 'never do X').\n\
-             3. search_memories — Look up what you know. Pass a query OR a memory UUID for full content.\n\
+             3. search_memories — Look up what you know. Pass a query OR a memory UUID for full content. Use proactively when the user mentions a project or topic.\n\
              4. forget_memory — Delete a memory when the user says 'forget' or 'don't remember that'.\n\
              \n\
-             SCOPE: When a user says 'always remember this' or stores a critical rule/constraint, set scope: 'always'. These memories are returned on every process_turn regardless of topic.\n\
+             SCOPE: Set scope: 'always' for hard rules/constraints the user wants enforced every turn. Default 'contextual' is retrieved by similarity.\n\
+             TYPES: semantic (facts/preferences), procedural (how-to), correction (was wrong now right), anti_pattern (never do X), episodic (what happened), reasoning (why a decision was made).\n\
+             QUALITY: One fact per memory. Self-contained. Include project context. Under 200 words. Don't store chitchat, temp info, or large code blocks.\n\
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
              If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
         )

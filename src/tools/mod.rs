@@ -7,6 +7,8 @@ mod inference;
 mod ingest;
 mod memory;
 mod process_turn;
+mod process_turn_analysis;
+mod process_turn_helpers;
 mod types;
 
 pub use types::*;

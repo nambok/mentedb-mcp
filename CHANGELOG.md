@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.21](https://github.com/nambok/mentedb-mcp/compare/v0.4.20...v0.4.21) - 2026-04-20
+
+### Fixed
+
+- detect TTY and show helpful usage info instead of hanging on direct invocation
+
+### Other
+
+- fix cargo fmt
+
 ## [0.4.20](https://github.com/nambok/mentedb-mcp/compare/v0.4.19...v0.4.20) - 2026-04-20
 
 ### Added

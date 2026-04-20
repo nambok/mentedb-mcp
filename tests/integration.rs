@@ -49,6 +49,7 @@ impl McpProcess {
             .arg("--llm-provider")
             .arg("mock")
             .arg("--full-tools")
+            .arg("--local")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

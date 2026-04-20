@@ -3,7 +3,7 @@ use super::*;
 // ── Internal helper methods called by the process_turn orchestrator ──
 
 impl MenteDbServer {
-    /// §1: Retrieve relevant context via speculative cache or full cosine scan.
+    /// §1: Retrieve relevant context via speculative cache or HNSW index search.
     pub(super) async fn retrieve_context(
         &self,
         user_message: &str,
@@ -17,27 +17,19 @@ impl MenteDbServer {
         drop(cache);
         let cache_hit = cache_result.is_some();
 
-        let mut db = self.db.lock().await;
-        let all_raw = recall_all_memories(&mut db);
-        drop(db);
-
-        let now_ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-        let all: Vec<ScoredMemory> = all_raw
-            .into_iter()
-            .filter(|sm| sm.memory.is_valid_at(now_ts))
-            .collect();
-
-        let (context_items, current_ids) = if let Some((ref cached_ids, ref _topic)) = cache_result
-        {
-            let cached_id_set: std::collections::HashSet<MemoryId> =
-                cached_ids.iter().cloned().collect();
-            let matched: Vec<&ScoredMemory> = all
+        // Try cache first — resolve cached IDs directly without loading all memories
+        if let Some((ref cached_ids, ref _topic)) = cache_result {
+            let mut db = self.db.lock().await;
+            let matched: Vec<ScoredMemory> = cached_ids
                 .iter()
-                .filter(|sm| cached_id_set.contains(&sm.memory.id))
+                .filter_map(|id| {
+                    db.get_memory(*id).ok().map(|m| ScoredMemory {
+                        memory: m,
+                        score: 0.9,
+                    })
+                })
                 .collect();
+            drop(db);
 
             if matched.len() >= cached_ids.len() / 2 {
                 let ids: Vec<MemoryId> = matched.iter().map(|sm| sm.memory.id).collect();
@@ -64,22 +56,56 @@ impl MenteDbServer {
                 tracing::debug!(
                     cached_ids = cached_ids.len(),
                     matched = matched.len(),
-                    "Speculative cache hit, skipped full scan"
+                    "Speculative cache hit, resolved IDs directly"
                 );
-                (items, ids)
-            } else {
-                tracing::debug!(
-                    cached_ids = cached_ids.len(),
-                    matched = matched.len(),
-                    "Speculative cache hit but IDs stale, falling back to full scan"
-                );
-                full_context_scan(&all, query_embedding, req, &self.delta_tracker).await
+                return (items, ids, cache_hit);
             }
-        } else {
-            full_context_scan(&all, query_embedding, req, &self.delta_tracker).await
-        };
 
-        (context_items, current_ids, cache_hit)
+            tracing::debug!(
+                cached_ids = cached_ids.len(),
+                matched = matched.len(),
+                "Speculative cache hit but IDs stale, falling back to HNSW search"
+            );
+        }
+
+        // Use HNSW index for similarity search instead of O(n) full scan
+        let mut db = self.db.lock().await;
+        let hnsw_results = db.recall_similar(query_embedding, 10).unwrap_or_default();
+        let scored: Vec<(ScoredMemory, f32)> = hnsw_results
+            .into_iter()
+            .filter_map(|(id, score)| {
+                db.get_memory(id)
+                    .ok()
+                    .map(|m| (ScoredMemory { memory: m, score }, score))
+            })
+            .collect();
+        drop(db);
+
+        let current_ids: Vec<MemoryId> = scored.iter().map(|(sm, _)| sm.memory.id).collect();
+
+        let mut dt = self.delta_tracker.lock().await;
+        let delta = dt.compute_delta(&current_ids, &dt.last_served.clone());
+        dt.update(&current_ids);
+        drop(dt);
+
+        let items: Vec<serde_json::Value> = scored
+            .iter()
+            .take(5)
+            .map(|(sm, score)| {
+                let mut val = memory_node_to_json(&sm.memory);
+                val["relevance_score"] = json!(score);
+                val["is_new"] = json!(delta.added.contains(&sm.memory.id));
+                val["from_cache"] = json!(false);
+                if let Some(ctx) = &req.project_context {
+                    val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
+                }
+                val
+            })
+            .collect();
+
+        tracing::info!(results = scored.len(), "HNSW index search completed");
+
+        (items, current_ids, cache_hit)
     }
 
     /// §2: Check pain signals against the current user message.

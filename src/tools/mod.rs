@@ -326,53 +326,6 @@ pub(crate) fn recall_all_memories(db: &mut MenteDb) -> Vec<ScoredMemory> {
         .collect()
 }
 
-/// Full O(n) cosine scan for context retrieval (cache miss path).
-pub(crate) async fn full_context_scan(
-    all: &[ScoredMemory],
-    query_embedding: &[f32],
-    req: &ProcessTurnRequest,
-    delta_tracker: &Mutex<DeltaTracker>,
-) -> (Vec<serde_json::Value>, Vec<MemoryId>) {
-    let mut scored: Vec<(f32, &ScoredMemory)> = all
-        .iter()
-        .map(|sm| {
-            let sim = cosine_similarity(query_embedding, &sm.memory.embedding);
-            (sim, sm)
-        })
-        .filter(|(sim, _)| *sim > 0.3)
-        .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let top_scored: Vec<&ScoredMemory> = scored.iter().take(10).map(|(_, sm)| *sm).collect();
-    let current_ids: Vec<MemoryId> = top_scored.iter().map(|sm| sm.memory.id).collect();
-
-    let mut dt = delta_tracker.lock().await;
-    let delta = dt.compute_delta(&current_ids, &dt.last_served.clone());
-    dt.update(&current_ids);
-    drop(dt);
-
-    let items: Vec<serde_json::Value> = top_scored
-        .iter()
-        .take(5)
-        .map(|sm| {
-            let score = scored
-                .iter()
-                .find(|(_, s)| s.memory.id == sm.memory.id)
-                .map(|(s, _)| *s)
-                .unwrap_or(0.0);
-            let mut val = memory_node_to_json(&sm.memory);
-            val["relevance_score"] = json!(score);
-            val["is_new"] = json!(delta.added.contains(&sm.memory.id));
-            val["from_cache"] = json!(false);
-            if let Some(ctx) = &req.project_context {
-                val["same_project"] = json!(sm.memory.tags.iter().any(|t| t == ctx));
-            }
-            val
-        })
-        .collect();
-
-    (items, current_ids)
-}
-
 /// Find a specific memory by UUID using direct page_map lookup.
 pub(crate) fn find_memory_by_id(
     db: &mut MenteDb,

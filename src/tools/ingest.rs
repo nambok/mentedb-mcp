@@ -56,7 +56,7 @@ impl MenteDbServer {
             }
         };
 
-        // Gather existing memories for dedup/contradiction checks
+        // Gather existing memories for dedup/contradiction checks via HNSW
         let existing_memories = {
             let db = &*self.db;
             let conv_embedding = self
@@ -64,15 +64,9 @@ impl MenteDbServer {
                 .embed(&req.conversation)
                 .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
             let similar = db.recall_similar(&conv_embedding, 20).unwrap_or_default();
-            let all_mems = recall_all_memories(&db);
-            similar
-                .iter()
-                .filter_map(|(id, _)| {
-                    all_mems
-                        .iter()
-                        .find(|sm| sm.memory.id == *id)
-                        .map(|sm| sm.memory.clone())
-                })
+            resolve_memory_ids(db, &similar)
+                .into_iter()
+                .map(|sm| sm.memory)
                 .collect::<Vec<MemoryNode>>()
         };
 
@@ -105,7 +99,7 @@ impl MenteDbServer {
 
         let db = &*self.db;
         let stored_ids =
-            store_extraction_results(&result, &db, self.embedding_provider.as_ref(), agent_id)?;
+            store_extraction_results(&result, db, self.embedding_provider.as_ref(), agent_id)?;
 
         let stats = &result.stats;
         tracing::info!(

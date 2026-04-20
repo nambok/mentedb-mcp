@@ -210,16 +210,20 @@ impl MenteDbServer {
             return 0;
         }
         let db = &*self.db;
-        let all_memories = recall_all_memories(&db);
-        let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
-
-        let Some(target) = all_nodes.iter().find(|m| m.id == id) else {
+        let Ok(target) = db.get_memory(id) else {
             return 0;
         };
 
+        // Use HNSW to find nearby memories for contradiction/obsolescence detection
+        let similar_ids = db.recall_similar(&target.embedding, 50).unwrap_or_default();
+        let existing: Vec<MemoryNode> = resolve_memory_ids(db, &similar_ids)
+            .into_iter()
+            .filter(|sm| sm.memory.id != id)
+            .map(|sm| sm.memory)
+            .collect();
+
         let engine = WriteInferenceEngine::new();
-        let existing: Vec<MemoryNode> = all_nodes.iter().filter(|m| m.id != id).cloned().collect();
-        let actions = engine.infer_on_write(target, &existing, &[]);
+        let actions = engine.infer_on_write(&target, &existing, &[]);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -283,7 +287,7 @@ impl MenteDbServer {
                     memory,
                     new_confidence,
                 } => {
-                    if let Some(mut mem) = all_nodes.iter().find(|m| m.id == *memory).cloned() {
+                    if let Ok(mut mem) = db.get_memory(*memory) {
                         mem.confidence = *new_confidence;
                         let _ = db.store(mem);
                         inference_applied += 1;
@@ -302,7 +306,7 @@ impl MenteDbServer {
                     superseded_by: _,
                     valid_until,
                 } => {
-                    if let Some(mut mem) = all_nodes.iter().find(|m| m.id == *memory).cloned() {
+                    if let Ok(mut mem) = db.get_memory(*memory) {
                         mem.valid_until = Some(*valid_until);
                         let _ = db.store(mem);
                         inference_applied += 1;
@@ -313,7 +317,7 @@ impl MenteDbServer {
                     new_content,
                     ..
                 } => {
-                    if let Some(mut mem) = all_nodes.iter().find(|m| m.id == *memory).cloned() {
+                    if let Ok(mut mem) = db.get_memory(*memory) {
                         mem.content = new_content.clone();
                         let _ = db.store(mem);
                         inference_applied += 1;
@@ -331,8 +335,8 @@ impl MenteDbServer {
                     ..
                 } = action
                 {
-                    let existing_mem = all_nodes.iter().find(|m| m.id == *existing_id);
-                    let new_mem = all_nodes.iter().find(|m| m.id == *new_id);
+                    let existing_mem = db.get_memory(*existing_id).ok();
+                    let new_mem = db.get_memory(*new_id).ok();
                     if let (Some(em), Some(nm)) = (existing_mem, new_mem) {
                         let summary_a = mentedb_cognitive::MemorySummary {
                             id: em.id,
@@ -365,9 +369,9 @@ impl MenteDbServer {
                                 reason,
                             }) => {
                                 let loser = if winner == existing_id.to_string() {
-                                    nm
+                                    &nm
                                 } else {
-                                    em
+                                    &em
                                 };
                                 let mut old = loser.clone();
                                 old.valid_until = Some(now);
@@ -404,24 +408,28 @@ impl MenteDbServer {
             return;
         }
         let db = &*self.db;
-        let all_memories = recall_all_memories(&db);
-        let all_nodes: Vec<MemoryNode> = all_memories.iter().map(|sm| sm.memory.clone()).collect();
-
-        let extractor = FactExtractor::new();
-        let Some(target) = all_nodes.iter().find(|m| m.id == id) else {
+        let Ok(target) = db.get_memory(id) else {
             return;
         };
-        let facts = extractor.extract_facts(target);
+
+        let extractor = FactExtractor::new();
+        let facts = extractor.extract_facts(&target);
+
+        // Use HNSW to find nearby memories for fact linking instead of scanning all
+        let similar_ids = db.recall_similar(&target.embedding, 50).unwrap_or_default();
+        let nearby: Vec<MemoryNode> = resolve_memory_ids(db, &similar_ids)
+            .into_iter()
+            .filter(|sm| sm.memory.id != id)
+            .map(|sm| sm.memory)
+            .collect();
+
         let now_facts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
         for fact in &facts {
-            for other in &all_nodes {
-                if other.id != id
-                    && (other.content.contains(&fact.subject)
-                        || other.content.contains(&fact.object))
-                {
+            for other in &nearby {
+                if other.content.contains(&fact.subject) || other.content.contains(&fact.object) {
                     let edge = MemoryEdge {
                         source: id,
                         target: other.id,

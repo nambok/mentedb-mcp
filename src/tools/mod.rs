@@ -268,20 +268,6 @@ pub(crate) fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![Content::text(msg.to_string())]))
 }
 
-/// Compute cosine similarity between two embedding vectors.
-pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
-}
-
 /// Serialize a MemoryNode to a JSON value with all fields.
 pub(crate) fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
     let attrs: serde_json::Map<String, serde_json::Value> = mem
@@ -315,6 +301,9 @@ pub(crate) fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
 }
 
 /// Retrieve all memories from the database using direct page_map access.
+///
+/// Use only when every memory is needed (consolidation, decay, archival, GDPR).
+/// For similarity-based retrieval, prefer `recall_similar` / `recall_hybrid_at`.
 pub(crate) fn recall_all_memories(db: &MenteDb) -> Vec<ScoredMemory> {
     db.memory_ids()
         .into_iter()
@@ -322,6 +311,18 @@ pub(crate) fn recall_all_memories(db: &MenteDb) -> Vec<ScoredMemory> {
             db.get_memory(id)
                 .ok()
                 .map(|memory| ScoredMemory { memory, score: 1.0 })
+        })
+        .collect()
+}
+
+/// Resolve HNSW result IDs into full `ScoredMemory` objects.
+pub(crate) fn resolve_memory_ids(db: &MenteDb, ids: &[(MemoryId, f32)]) -> Vec<ScoredMemory> {
+    ids.iter()
+        .filter_map(|(id, score)| {
+            db.get_memory(*id).ok().map(|memory| ScoredMemory {
+                memory,
+                score: *score,
+            })
         })
         .collect()
 }

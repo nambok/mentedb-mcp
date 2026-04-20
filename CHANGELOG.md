@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.20](https://github.com/nambok/mentedb-mcp/compare/v0.4.19...v0.4.20) - 2026-04-20
+
+### Added
+
+- log version changes on auto-update of agent instructions
+
+### Other
+
+- trim agent instructions — remove redundant memory types, extra tool calls, verbose sections
+
 ## [0.4.19](https://github.com/nambok/mentedb-mcp/compare/v0.4.18...v0.4.19) - 2026-04-20
 
 ### Other

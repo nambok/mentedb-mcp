@@ -54,7 +54,7 @@ impl MenteDbServer {
 #[rmcp::tool_router(router = tool_router_process_turn, vis = "pub")]
 impl MenteDbServer {
     #[rmcp::tool(
-        description = "Call on EVERY turn. Returns context from past conversations, stores the current turn, and detects contradictions. Pass user_message and assistant_response (assistant_response can be empty)."
+        description = "Process a conversation turn. Stores new memories and returns relevant context from past conversations. MUST be called every turn."
     )]
     async fn process_turn(
         &self,

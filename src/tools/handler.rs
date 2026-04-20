@@ -109,7 +109,7 @@ impl ServerHandler for MenteDbServer {
                 json!({ "name": "register_entity", "description": "Register entity for phantom detection" }),
                 json!({ "name": "get_cognitive_state", "description": "Full cognitive state snapshot" }),
                 json!({ "name": "get_stats", "description": "Database statistics" }),
-                json!({ "name": "process_turn", "description": "One-call-per-turn: search + extract + store + infer + track" }),
+                json!({ "name": "process_turn", "description": "Process a conversation turn. Stores new memories and returns relevant context from past conversations. MUST be called every turn." }),
             ];
             let info = json!({
                 "description": "MenteDB memory tools",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.23](https://github.com/nambok/mentedb-mcp/compare/v0.4.22...v0.4.23) - 2026-04-20
+
+### Fixed
+
+- align process_turn tool description across local and cloud servers
+
 ## [0.4.22](https://github.com/nambok/mentedb-mcp/compare/v0.4.21...v0.4.22) - 2026-04-20
 
 ### Added

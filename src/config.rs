@@ -1,6 +1,17 @@
 use std::path::PathBuf;
 
+/// Resolve the data directory, expanding `~` to the user home.
+pub fn resolve_data_dir(raw: &str) -> PathBuf {
+    if raw.starts_with('~')
+        && let Some(home) = dirs_home()
+    {
+        return home.join(raw.trim_start_matches("~/"));
+    }
+    PathBuf::from(raw)
+}
+
 /// Server configuration parsed from CLI arguments and environment.
+#[cfg(feature = "local")]
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ServerConfig {
@@ -18,6 +29,7 @@ pub struct ServerConfig {
     pub full_tools: bool,
 }
 
+#[cfg(feature = "local")]
 impl ServerConfig {
     pub fn new(
         data_dir: PathBuf,
@@ -35,16 +47,6 @@ impl ServerConfig {
             llm_model,
             full_tools,
         }
-    }
-
-    /// Resolve the data directory, expanding `~` to the user home.
-    pub fn resolve_data_dir(raw: &str) -> PathBuf {
-        if raw.starts_with('~')
-            && let Some(home) = dirs_home()
-        {
-            return home.join(raw.trim_start_matches("~/"));
-        }
-        PathBuf::from(raw)
     }
 }
 

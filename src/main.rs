@@ -1,8 +1,11 @@
 mod cloud_client;
 mod cloud_server;
 mod config;
+#[cfg(feature = "local")]
 mod resources;
+#[cfg(feature = "local")]
 mod server;
+#[cfg(feature = "local")]
 mod tools;
 
 use clap::{Parser, Subcommand};
@@ -12,7 +15,9 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+#[cfg(feature = "local")]
 use config::ServerConfig;
+use config::resolve_data_dir;
 
 fn home_dir() -> Option<String> {
     std::env::var("HOME")
@@ -30,23 +35,28 @@ struct Cli {
     #[arg(long, default_value = "~/.mentedb")]
     data_dir: String,
 
-    /// Embedding dimension
+    /// Embedding dimension (local mode only)
+    #[cfg(feature = "local")]
     #[arg(long, default_value = "128")]
     embedding_dim: usize,
 
-    /// LLM provider: openai, anthropic, ollama, or mock
+    /// LLM provider: openai, anthropic, ollama, or mock (local mode only)
+    #[cfg(feature = "local")]
     #[arg(long, default_value = "mock", env = "MENTEDB_LLM_PROVIDER")]
     llm_provider: String,
 
-    /// API key for the LLM provider
+    /// API key for the LLM provider (local mode only)
+    #[cfg(feature = "local")]
     #[arg(long, env = "MENTEDB_LLM_API_KEY")]
     llm_api_key: Option<String>,
 
-    /// Model name override for the LLM provider
+    /// Model name override for the LLM provider (local mode only)
+    #[cfg(feature = "local")]
     #[arg(long, env = "MENTEDB_LLM_MODEL")]
     llm_model: Option<String>,
 
-    /// Expose all tools (default: only essential tools for better agent compliance)
+    /// Expose all tools (local mode only)
+    #[cfg(feature = "local")]
     #[arg(long)]
     full_tools: bool,
 
@@ -97,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
         None => {}
     }
 
-    let data_dir = ServerConfig::resolve_data_dir(&cli.data_dir);
+    let data_dir = resolve_data_dir(&cli.data_dir);
 
     // Ensure data directory exists for log file
     std::fs::create_dir_all(&data_dir).ok();
@@ -131,8 +141,6 @@ async fn main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         data_dir = %data_dir.display(),
         log_file = %log_path.display(),
-        embedding_dim = cli.embedding_dim,
-        llm_provider = %cli.llm_provider,
         "mentedb-mcp starting"
     );
 
@@ -141,24 +149,39 @@ async fn main() -> anyhow::Result<()> {
 
     // Check for cloud credentials — if present, use cloud mode (HTTP proxy, no local DB).
     // This allows multiple MCP server instances to run concurrently.
-    if !cli.local && let Some((api_url, token)) = load_cloud_credentials() {
+    if !cli.local
+        && let Some((api_url, token)) = load_cloud_credentials()
+    {
         tracing::info!("Cloud credentials found, starting in cloud mode (no local database)");
         return cloud_server::run(api_url, token).await;
     }
 
     // No cloud credentials or --local flag — fall back to local embedded database mode.
-    tracing::info!("Starting in local mode (embedded database)");
+    #[cfg(feature = "local")]
+    {
+        tracing::info!("Starting in local mode (embedded database)");
 
-    let config = ServerConfig::new(
-        data_dir,
-        cli.embedding_dim,
-        cli.llm_provider,
-        cli.llm_api_key,
-        cli.llm_model,
-        cli.full_tools,
-    );
+        let config = ServerConfig::new(
+            data_dir,
+            cli.embedding_dim,
+            cli.llm_provider,
+            cli.llm_api_key,
+            cli.llm_model,
+            cli.full_tools,
+        );
 
-    server::run(config).await
+        server::run(config).await
+    }
+
+    #[cfg(not(feature = "local"))]
+    {
+        tracing::error!(
+            "No cloud credentials found. Run `mentedb-mcp login` to connect to MenteDB Cloud, or rebuild with --features local for embedded mode."
+        );
+        anyhow::bail!(
+            "No cloud credentials found. Run `mentedb-mcp login` to connect to MenteDB Cloud."
+        )
+    }
 }
 
 /// Auto-update agent instructions on startup.

@@ -20,6 +20,7 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo check
+      - run: cargo check --features local
 
   test:
     name: Test
@@ -30,7 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - run: cargo test
+      - run: cargo test --features local
 
   fmt:
     name: Format
@@ -52,3 +53,4 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo clippy -- -D warnings
+      - run: cargo clippy --features local -- -D warnings

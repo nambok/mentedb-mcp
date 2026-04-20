@@ -3,6 +3,9 @@
 // Each test spawns the binary as a child process with stdio transport,
 // sends JSON-RPC messages, and verifies responses. This exercises the
 // full MCP protocol end-to-end.
+//
+// These tests require the "local" feature (embedded database).
+#![cfg(feature = "local")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;

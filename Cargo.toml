@@ -15,14 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io"] }
-mentedb = "0.4"
-mentedb-core = "0.4"
-mentedb-graph = "0.4"
-mentedb-cognitive = "0.4"
-mentedb-context = "0.4"
-mentedb-embedding = { version = "0.4", features = ["local"] }
-mentedb-extraction = "0.4"
-mentedb-consolidation = "0.4"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -35,9 +27,34 @@ uuid = { version = "1", features = ["v4"] }
 schemars = "1"
 axum = { version = "0.7", features = ["json"] }
 open = "5"
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
+
+# Local mode dependencies (heavy - embedded DB, embeddings, LLM extraction)
+mentedb = { version = "0.4", optional = true }
+mentedb-core = { version = "0.4", optional = true }
+mentedb-graph = { version = "0.4", optional = true }
+mentedb-cognitive = { version = "0.4", optional = true }
+mentedb-context = { version = "0.4", optional = true }
+mentedb-embedding = { version = "0.4", features = ["local"], optional = true }
+mentedb-extraction = { version = "0.4", optional = true }
+mentedb-consolidation = { version = "0.4", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]
 default = []
+local = [
+    "mentedb",
+    "mentedb-core",
+    "mentedb-graph",
+    "mentedb-cognitive",
+    "mentedb-context",
+    "mentedb-embedding",
+    "mentedb-extraction",
+    "mentedb-consolidation",
+]
 vendored-openssl = ["openssl"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

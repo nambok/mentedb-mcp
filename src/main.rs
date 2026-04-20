@@ -147,6 +147,22 @@ async fn main() -> anyhow::Result<()> {
     // Auto-update agent instructions on startup (silent, best-effort)
     auto_update_instructions();
 
+    // If stdin is a TTY, the user ran this directly — show help instead of hanging.
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("mentedb-mcp v{}", env!("CARGO_PKG_VERSION"));
+        eprintln!();
+        eprintln!("This is an MCP (Model Context Protocol) server that communicates over stdio.");
+        eprintln!("It's designed to be launched by an MCP client, not run directly.");
+        eprintln!();
+        eprintln!("Quick start:");
+        eprintln!("  mentedb-mcp setup     Set up MenteDB in your editor (Copilot CLI, Cursor, etc.)");
+        eprintln!("  mentedb-mcp login     Authenticate with MenteDB Cloud");
+        eprintln!("  mentedb-mcp status    Check connection and configuration");
+        eprintln!();
+        eprintln!("For more info: https://mentedb.com/docs");
+        std::process::exit(0);
+    }
+
     // Check for cloud credentials — if present, use cloud mode (HTTP proxy, no local DB).
     // This allows multiple MCP server instances to run concurrently.
     if !cli.local

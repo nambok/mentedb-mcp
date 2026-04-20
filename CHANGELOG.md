@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.16](https://github.com/nambok/mentedb-mcp/compare/v0.4.15...v0.4.16) - 2026-04-20
+
+### Security
+
+- restrict CORS, chmod 600 token file, fix publish
+
 ## [0.4.15](https://github.com/nambok/mentedb-mcp/compare/v0.4.14...v0.4.15) - 2026-04-20
 
 ### Added

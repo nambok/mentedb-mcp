@@ -29,10 +29,13 @@ cargo run -- --help             # Show CLI help
 - `src/tools/inference.rs`: Write inference and stream checking tools
 - `src/tools/consolidation.rs`: Maintenance tools (consolidate, decay, compress, archival, GDPR)
 - `src/tools/ingest.rs`: Conversation ingestion via LLM extraction
-- `src/tools/process_turn.rs`: Main per-turn pipeline (search + extract + store + infer)
+- `src/tools/process_turn.rs`: Main per-turn pipeline orchestrator
+- `src/tools/process_turn_helpers.rs`: Memory-focused helpers (retrieve_context, store_episodic, write inference)
+- `src/tools/process_turn_analysis.rs`: Analysis helpers (sentiment, phantoms, trajectory, maintenance)
 - `src/tools/context.rs`: Context assembly and stats
 - `src/tools/handler.rs`: ServerHandler impl (get_info, resources)
-- `src/cloud_server.rs`: Cloud-mode MCP server (proxies to API)
+- `src/cloud_server.rs`: Cloud-mode MCP server (proxies to API via proxy_tool helper)
+- `src/cloud_client.rs`: CloudClient HTTP wrapper, proxies tool calls to MenteDB Cloud API
 - `src/config.rs`: Server configuration struct
 
 ## Dependencies

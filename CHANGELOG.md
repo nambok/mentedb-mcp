@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.25](https://github.com/nambok/mentedb-mcp/compare/v0.4.24...v0.4.25) - 2026-04-23
+
+### Added
+
+- instruct agents to call store_memory on explicit remember requests
+
 ## [0.4.24](https://github.com/nambok/mentedb-mcp/compare/v0.4.23...v0.4.24) - 2026-04-20
 
 ### Added

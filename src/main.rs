@@ -301,6 +301,8 @@ When you notice important information, call `store_memory`:
 - **Procedures**: "Deploy with: cargo build --release" → type: procedural
 - **Mistakes**: "Never retag releases" → type: anti_pattern
 
+When the user explicitly says "remember this", "always remember", "don't forget", or similar — call `store_memory` immediately in that same turn. Do not rely on process_turn extraction for explicit requests.
+
 Don't store chitchat. Store facts, preferences, decisions, corrections.
 
 ## search_memories — Look things up

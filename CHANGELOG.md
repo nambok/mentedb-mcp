@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.26](https://github.com/nambok/mentedb-mcp/compare/v0.4.25...v0.4.26) - 2026-04-24
+
+### Other
+
+- Pin rmcp ~1.3 + rmcp-macros 1.3.0 to fix --features local build
+- Add resilience instruction: always retry process_turn after failures
+
 ## [0.4.25](https://github.com/nambok/mentedb-mcp/compare/v0.4.24...v0.4.25) - 2026-04-23
 
 ### Added

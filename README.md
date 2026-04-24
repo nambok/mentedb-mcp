@@ -199,6 +199,10 @@ Set `scope: 'always'` when the user says "always remember this" or states a hard
 - **Keep under 200 words** — summarize if needed
 - **Don't store** — greetings, temporary info, large code blocks, chitchat
 
+### Resilience
+
+Even if `process_turn` fails or errors on a turn, always call it again on the next turn. Never skip because of a prior failure.
+
 ### Local mode: full tools (`--full-tools`)
 
 In local mode (`--local`), you can expose all 32 tools with `--full-tools` for advanced memory operations including knowledge graph traversal, consolidation, cognitive systems, and GDPR forget.

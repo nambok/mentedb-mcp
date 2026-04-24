@@ -324,6 +324,10 @@ Set `scope: 'always'` for critical rules that must be surfaced every turn regard
 - Keep under 200 words. Summarize if needed.
 - If a fact changes, store as a `correction` — contradictions are detected automatically.
 - Do NOT store: greetings, temporary info, large code blocks, one-off details
+
+## Resilience
+
+Even if `process_turn` fails or errors on a turn, ALWAYS call it again on the next turn. Never skip because of a prior failure.
 "#;
 
 async fn run_login() -> anyhow::Result<()> {

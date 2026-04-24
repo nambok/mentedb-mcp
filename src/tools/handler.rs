@@ -15,7 +15,8 @@ impl ServerHandler for MenteDbServer {
              TYPES: semantic (facts/preferences), procedural (how-to), correction (was wrong now right), anti_pattern (never do X), episodic (what happened), reasoning (why a decision was made).\n\
              QUALITY: One fact per memory. Self-contained. Include project context. Under 200 words. Don't store chitchat, temp info, or large code blocks.\n\
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\
-             If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.",
+             If pain_warnings are returned, WARN the user. If contradictions > 0, flag it.\n\
+              RESILIENCE: Even if process_turn fails or errors on a turn, ALWAYS call it again on the next turn. Never skip because of a prior failure.",
         );
 
         if self.using_hash_fallback {

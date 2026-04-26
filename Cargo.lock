@@ -1684,16 +1684,17 @@ dependencies = [
 
 [[package]]
 name = "mentedb"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d43f366fe5fb12cfe8e04d32c53ddc31707190cab00d732d6ba73cdeac920d"
 dependencies = [
- "mentedb-cognitive 0.8.0",
- "mentedb-consolidation 0.8.0",
- "mentedb-context 0.8.0",
- "mentedb-core 0.8.0",
- "mentedb-embedding 0.8.0",
- "mentedb-extraction 0.8.0 (git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4)",
- "mentedb-graph 0.8.0",
+ "mentedb-cognitive",
+ "mentedb-consolidation",
+ "mentedb-context",
+ "mentedb-core",
+ "mentedb-embedding",
+ "mentedb-extraction",
+ "mentedb-graph",
  "mentedb-index",
  "mentedb-query",
  "mentedb-storage",
@@ -1705,29 +1706,13 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "ahash",
- "crossbeam",
- "mentedb-core 0.8.0",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-cognitive"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d2ede4afc89d7011f3eae4209a4a86eb18e5ab39ba06b3950cac4f034279b4f"
+checksum = "6c1217208a5033685b06a41a7382cb67c793179377da7b19f1ccfaa6dd9bb3e1"
 dependencies = [
  "ahash",
  "crossbeam",
- "mentedb-core 0.8.1",
+ "mentedb-core",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1738,24 +1723,12 @@ dependencies = [
 
 [[package]]
 name = "mentedb-consolidation"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "ahash",
- "mentedb-core 0.8.0",
- "serde",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-consolidation"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bfd6b1594557d4262c5519ceb548e015979c99d879b4805ebbd20b000e32db2"
+checksum = "7f73a8bfdcb5ed92e454ac7cd0bdd5af9c9745e63e24fbc8cc86d3ecb25d59d4"
 dependencies = [
  "ahash",
- "mentedb-core 0.8.1",
+ "mentedb-core",
  "serde",
  "tracing",
  "uuid",
@@ -1763,25 +1736,12 @@ dependencies = [
 
 [[package]]
 name = "mentedb-context"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "ahash",
- "mentedb-core 0.8.0",
- "serde",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-context"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "822b77842a3e4d5260b79989c8ed239660312fbfe3cafdbf15669730b203d2ca"
+checksum = "a28f8d68458f0713b76b3e4d579ea30831b1f1f558d902a2c55fb65845b6b75e"
 dependencies = [
  "ahash",
- "mentedb-core 0.8.1",
+ "mentedb-core",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1790,25 +1750,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "ahash",
- "bytemuck",
- "bytes",
- "parking_lot",
- "serde",
- "serde_json",
- "smallvec",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-core"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5369ed75854c1659ffa756f6ca7c29ace547426286569406efb2687edeff20a"
+checksum = "43281c3c004394f97cae9aff79e24a75ba472476a794103be85aabf27f9072da"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1823,28 +1767,15 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "mentedb-core 0.8.0",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mentedb-embedding"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b454aeb455ca8a1a54dc7fc464beb2d644edc8e2ae4562e0cecaebd072efd7a1"
+checksum = "3d2913b9ab1e05d31082116ab51d7ca1d54e5864205347bd288ff8c64e17dea8"
 dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "hf-hub",
- "mentedb-core 0.8.1",
+ "mentedb-core",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1855,30 +1786,13 @@ dependencies = [
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "817ef2c3e29d2692de7efd036f6b502cfc20c9c748706ecc1981c483d31b01e5"
+checksum = "464d1ed7135717d822a89d4e0e292df3ce3cf8acc6d3ae5ec652c665f2059e0e"
 dependencies = [
- "mentedb-cognitive 0.8.1",
- "mentedb-core 0.8.1",
- "mentedb-embedding 0.8.1",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-extraction"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "mentedb-cognitive 0.8.0",
- "mentedb-core 0.8.0",
- "mentedb-embedding 0.8.0",
+ "mentedb-cognitive",
+ "mentedb-core",
+ "mentedb-embedding",
  "reqwest",
  "serde",
  "serde_json",
@@ -1890,30 +1804,14 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
-dependencies = [
- "ahash",
- "bincode",
- "bytemuck",
- "mentedb-core 0.8.0",
- "parking_lot",
- "serde",
- "serde_json",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "mentedb-graph"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c42d85dc747295c8c7481db5d68c3e03f62f6f2e60f8dc0843e815ed343ed35"
+checksum = "70fc43bf1ad17494b73116a97bbb989b26b7752d1b0d7b9bbc92ce8a72cff117"
 dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core 0.8.1",
+ "mentedb-core",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1923,13 +1821,14 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e02225bd0f5e93a086415e691bc0e9157432c12d3398b2d5803c001ed4ddcdd"
 dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core 0.8.0",
+ "mentedb-core",
  "parking_lot",
  "rand",
  "roaring",
@@ -1947,13 +1846,13 @@ dependencies = [
  "axum",
  "clap",
  "mentedb",
- "mentedb-cognitive 0.8.1",
- "mentedb-consolidation 0.8.1",
- "mentedb-context 0.8.1",
- "mentedb-core 0.8.0",
- "mentedb-embedding 0.8.1",
- "mentedb-extraction 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "mentedb-graph 0.8.1",
+ "mentedb-cognitive",
+ "mentedb-consolidation",
+ "mentedb-context",
+ "mentedb-core",
+ "mentedb-embedding",
+ "mentedb-extraction",
+ "mentedb-graph",
  "open",
  "openssl",
  "reqwest",
@@ -1970,10 +1869,11 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ab27cdd0bf7d80bd53d9045ca1075e79ca1585b358a2bdaaff754589146b11a"
 dependencies = [
- "mentedb-core 0.8.0",
+ "mentedb-core",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1982,8 +1882,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.8.0"
-source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aaf2f3be9f87a27020cd338d40d9a62fbb9cb26d8509fbfb145aaac26bb5b2b"
 dependencies = [
  "ahash",
  "bincode",
@@ -1992,7 +1893,7 @@ dependencies = [
  "crossbeam",
  "fs2",
  "lz4_flex",
- "mentedb-core 0.8.0",
+ "mentedb-core",
  "parking_lot",
  "serde",
  "serde_json",

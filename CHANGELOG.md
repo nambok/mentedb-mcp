@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0](https://github.com/nambok/mentedb-mcp/compare/v0.4.26...v0.5.0) - 2026-04-26
+
+### Other
+
+- delegate cognitive tools to engine facade ([#66](https://github.com/nambok/mentedb-mcp/pull/66))
+
 ## [0.4.26](https://github.com/nambok/mentedb-mcp/compare/v0.4.25...v0.4.26) - 2026-04-24
 
 ### Other

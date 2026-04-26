@@ -156,7 +156,7 @@ By default, the server exposes 4 essential tools:
 
 | Tool | Description |
 |------|-------------|
-| `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions, generates pain warnings. Accepts `project_context` and `agent_id` for scoping. |
+| `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions, generates pain warnings. Triggers automatic enrichment when LLM is configured. Accepts `project_context` and `agent_id` for scoping. |
 | `store_memory` | Store an important fact with type, tags, and optional scope. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. Accepts `limit` (default 10, max 50) and `memory_type` filter. |
 | `forget_memory` | Delete a memory by ID. Accepts optional `reason` for audit logging. |
@@ -170,6 +170,34 @@ By default, the server exposes 4 essential tools:
 | `contradictions` | Number of contradictions detected |
 | `contradiction_details` | Array of `{ memory_id, explanation }` for each contradiction |
 | `pain_warnings` | Array of `{ id, warning }` from anti_pattern memories matching current context |
+
+### Automatic Enrichment
+
+When an LLM provider is configured, `process_turn` automatically triggers a background enrichment pipeline that enhances your memory graph over time:
+
+| Phase | What it does |
+|-------|-------------|
+| **Extraction** | Converts raw conversations into structured semantic facts and entity nodes |
+| **Entity Linking** | Resolves duplicates and aliases (e.g., "JS" ↔ "JavaScript") using rules + LLM |
+| **Community Detection** | Groups related entities and generates summaries per community |
+| **User Model** | Builds an always-available user profile from accumulated knowledge |
+
+Enrichment is **fully automatic** — no additional tools or configuration needed beyond setting an LLM provider. Results feed directly into future `process_turn` context retrieval, improving recall quality over time.
+
+Configure an LLM provider via environment variables:
+
+```bash
+# OpenAI (recommended)
+export MENTEDB_OPENAI_API_KEY=sk-...
+
+# Or Anthropic
+export MENTEDB_ANTHROPIC_API_KEY=sk-ant-...
+
+# Or Ollama (local, no key needed)
+export MENTEDB_LLM_PROVIDER=ollama
+```
+
+Without an LLM provider, the MCP server works perfectly — enrichment simply doesn't run.
 
 ### Memory Types
 
@@ -231,9 +259,11 @@ Options:
 |----------|-------------|
 | `MENTEDB_API_URL` | Override cloud API URL (default: https://api.mentedb.com) |
 | `MENTEDB_CLOUD_URL` | Override cloud dashboard URL (for login flow) |
-| `MENTEDB_LLM_PROVIDER` | LLM provider for local mode: `openai`, `anthropic`, `ollama`, `mock` |
-| `MENTEDB_LLM_API_KEY` | API key for local LLM extraction |
+| `MENTEDB_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `ollama`, `mock` |
+| `MENTEDB_LLM_API_KEY` | API key for LLM extraction |
 | `MENTEDB_LLM_MODEL` | Model name override |
+| `MENTEDB_OPENAI_API_KEY` | OpenAI API key (sets provider to `openai` automatically) |
+| `MENTEDB_ANTHROPIC_API_KEY` | Anthropic API key (sets provider to `anthropic` automatically) |
 
 The server writes logs to both stderr and a rolling file at `~/.mentedb/mentedb-mcp.log`.
 

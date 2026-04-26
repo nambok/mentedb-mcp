@@ -30,8 +30,8 @@ open = "5"
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 
 # Local mode dependencies (heavy - embedded DB, embeddings, LLM extraction)
-mentedb = { version = "0.8", optional = true }
-mentedb-core = { version = "0.8", optional = true }
+mentedb = { version = "0.8.2", features = ["enrichment"], optional = true }
+mentedb-core = { version = "0.8.2", optional = true }
 mentedb-graph = { version = "0.8", optional = true }
 mentedb-cognitive = { version = "0.8", optional = true }
 mentedb-context = { version = "0.8", optional = true }

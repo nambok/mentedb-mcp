@@ -219,7 +219,7 @@ impl MenteDbServer {
 
                 // Build EntityCandidate list with context for ALL entities
                 // (LLM needs full picture to group correctly)
-                let candidates: Vec<mentedb_cognitive::EntityCandidate> = all_entities_with_context
+                let mut candidates: Vec<mentedb_cognitive::EntityCandidate> = all_entities_with_context
                     .iter()
                     .map(|(name, ctx)| mentedb_cognitive::EntityCandidate {
                         name: name.clone(),
@@ -227,6 +227,8 @@ impl MenteDbServer {
                         memory_id: None,
                     })
                     .collect();
+                // Sort for deterministic batching across runs
+                candidates.sort_by(|a, b| a.name.cmp(&b.name));
 
                 // Batch into groups of 50 to avoid context limit issues
                 let batch_size = 50;
@@ -241,6 +243,13 @@ impl MenteDbServer {
                             tracing::error!(error = %e, "enrichment: LLM entity resolution failed");
                         }
                     }
+                }
+
+                // Transitive consolidation: if batch 1 says A→B and batch 2 says B→C,
+                // merge them into a single group A→B→C. This handles entities that span
+                // batch boundaries.
+                if all_merge_groups.len() > 1 {
+                    all_merge_groups = consolidate_merge_groups(all_merge_groups);
                 }
 
                 if !all_merge_groups.is_empty() {
@@ -343,5 +352,82 @@ fn batch_conversations(memories: &[MemoryNode], batch_size: usize) -> Vec<Vec<Me
     memories
         .chunks(batch_size)
         .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
+/// Transitively consolidate merge groups from independent LLM batches.
+///
+/// If batch 1 produces {canonical: "NYC", aliases: ["new york"]} and batch 2
+/// produces {canonical: "new york city", aliases: ["new york"]}, this merges
+/// them into a single group because "new york" appears in both.
+fn consolidate_merge_groups(
+    groups: Vec<mentedb_cognitive::llm::EntityMergeGroup>,
+) -> Vec<mentedb_cognitive::llm::EntityMergeGroup> {
+    use std::collections::{HashMap, HashSet};
+
+    // Build name → group index mapping
+    let mut name_to_group: HashMap<String, usize> = HashMap::new();
+    // Union-Find parent array
+    let mut parent: Vec<usize> = (0..groups.len()).collect();
+
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            parent[i] = find(parent, parent[i]);
+        }
+        parent[i]
+    }
+
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let ra = find(parent, a);
+        let rb = find(parent, b);
+        if ra != rb {
+            parent[ra] = rb;
+        }
+    }
+
+    for (idx, group) in groups.iter().enumerate() {
+        let all_names = std::iter::once(&group.canonical).chain(group.aliases.iter());
+        for name in all_names {
+            let key = name.to_lowercase();
+            if let Some(&existing_idx) = name_to_group.get(&key) {
+                union(&mut parent, idx, existing_idx);
+            }
+            name_to_group.insert(key, idx);
+        }
+    }
+
+    // Collect groups by root
+    let mut root_groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..groups.len() {
+        let root = find(&mut parent, i);
+        root_groups.entry(root).or_default().push(i);
+    }
+
+    root_groups
+        .into_values()
+        .map(|indices| {
+            let mut all_names: HashSet<String> = HashSet::new();
+            let mut best_confidence: f32 = 0.0;
+            let mut canonical = String::new();
+
+            for &idx in &indices {
+                let g = &groups[idx];
+                all_names.insert(g.canonical.clone());
+                for a in &g.aliases {
+                    all_names.insert(a.clone());
+                }
+                if g.confidence > best_confidence {
+                    best_confidence = g.confidence;
+                    canonical = g.canonical.clone();
+                }
+            }
+
+            all_names.remove(&canonical);
+            mentedb_cognitive::llm::EntityMergeGroup {
+                canonical,
+                aliases: all_names.into_iter().collect(),
+                confidence: best_confidence,
+            }
+        })
         .collect()
 }

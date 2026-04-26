@@ -60,24 +60,19 @@ impl MenteDbServer {
             return 0;
         };
 
-        // Find memories with Contradicts edges to the new episodic memory
-        let edges = db.get_edges(eid).unwrap_or_default();
+        // Find memories flagged as contradicting the new episodic memory
+        let contradicting_ids = db.graph().find_all_contradictions(eid);
+        if contradicting_ids.is_empty() {
+            return 0;
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
 
         let mut verified = 0u32;
-        for edge in &edges {
-            if edge.edge_type != EdgeType::Contradicts {
-                continue;
-            }
-            let other_id = if edge.source == eid {
-                edge.target
-            } else {
-                edge.source
-            };
-            let Ok(other_mem) = db.get_memory(other_id) else {
+        for other_id in &contradicting_ids {
+            let Ok(other_mem) = db.get_memory(*other_id) else {
                 continue;
             };
 

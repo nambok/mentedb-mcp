@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.3](https://github.com/nambok/mentedb-mcp/compare/v0.5.2...v0.5.3) - 2026-04-26
+
+### Other
+
+- Wire sleeptime enrichment into MCP process_turn ([#70](https://github.com/nambok/mentedb-mcp/pull/70))
+
 ## [0.5.2](https://github.com/nambok/mentedb-mcp/compare/v0.5.1...v0.5.2) - 2026-04-26
 
 ### Fixed

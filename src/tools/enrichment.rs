@@ -333,8 +333,9 @@ impl MenteDbServer {
                     .await
                 {
                     Ok(result) => {
+                        // Only link the entities we actually sent to the LLM
                         let member_names: Vec<String> =
-                            members.iter().map(|(n, _)| n.clone()).collect();
+                            entity_pairs.iter().map(|(n, _)| n.clone()).collect();
                         match self.db.store_community_summary(
                             category,
                             &result.summary,

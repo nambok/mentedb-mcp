@@ -300,6 +300,108 @@ impl MenteDbServer {
         }
         total_edges += llm_link_result.edges_created;
 
+        // ── Phase 3: Community Detection ──
+        // Group entities by category, generate LLM summaries for each cluster.
+        let mut communities_created = 0usize;
+        if let Some(cognitive_llm) = &self.cognitive_llm {
+            let communities = self.db.entity_communities();
+            let existing_summaries: std::collections::HashSet<String> = self
+                .db
+                .community_summaries()
+                .iter()
+                .flat_map(|m| {
+                    m.tags
+                        .iter()
+                        .filter_map(|t| t.strip_prefix("community:").map(|s| s.to_string()))
+                })
+                .collect();
+
+            for (category, members) in &communities {
+                if existing_summaries.contains(category) {
+                    tracing::debug!(category = %category, "community summary already exists, skipping");
+                    continue;
+                }
+
+                let entity_pairs: Vec<(String, String)> = members
+                    .iter()
+                    .take(20) // Cap per-community to fit LLM context
+                    .cloned()
+                    .collect();
+
+                match cognitive_llm
+                    .generate_community_summary(category, &entity_pairs)
+                    .await
+                {
+                    Ok(result) => {
+                        let member_names: Vec<String> =
+                            members.iter().map(|(n, _)| n.clone()).collect();
+                        match self.db.store_community_summary(
+                            category,
+                            &result.summary,
+                            &member_names,
+                        ) {
+                            Ok(_) => {
+                                communities_created += 1;
+                                tracing::info!(
+                                    category = %category,
+                                    members = members.len(),
+                                    "community summary created"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    error = %e,
+                                    category = %category,
+                                    "failed to store community summary"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            category = %category,
+                            "LLM community summary failed"
+                        );
+                    }
+                }
+            }
+        }
+
+        // ── Phase 4: User Model Generation ──
+        // Synthesize a comprehensive user profile from all knowledge.
+        let mut user_model_updated = false;
+        if let Some(cognitive_llm) = &self.cognitive_llm {
+            let facts = self.db.profile_facts();
+            let community_texts: Vec<String> = self
+                .db
+                .community_summaries()
+                .iter()
+                .map(|m| m.content.clone())
+                .collect();
+
+            // Only generate if we have meaningful data
+            if facts.len() >= 3 || !community_texts.is_empty() {
+                match cognitive_llm
+                    .generate_user_profile(&facts, &community_texts)
+                    .await
+                {
+                    Ok(result) => match self.db.store_user_profile(&result.profile) {
+                        Ok(_) => {
+                            user_model_updated = true;
+                            tracing::info!("user profile updated");
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to store user profile");
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(error = %e, "LLM user profile generation failed");
+                    }
+                }
+            }
+        }
+
         self.db.mark_enrichment_complete(current_turn);
 
         tracing::info!(
@@ -311,6 +413,8 @@ impl MenteDbServer {
             llm_edges = llm_link_result.edges_created,
             duplicates_skipped = total_dupes,
             contradictions = total_contradictions,
+            communities = communities_created,
+            user_model = user_model_updated,
             batches = batches.len(),
             "sleeptime enrichment complete"
         );

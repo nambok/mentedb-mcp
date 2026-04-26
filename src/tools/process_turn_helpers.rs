@@ -106,31 +106,45 @@ impl MenteDbServer {
     }
 
     /// §2: Check pain signals against the current user message.
+    /// Mirrors PainRegistry::get_pain_for_context: filter by keyword match, sort by relevance.
     pub(super) async fn check_pain_signals(&self, user_message: &str) -> Vec<serde_json::Value> {
         let context_words: Vec<String> = user_message
             .split_whitespace()
             .map(|w| w.to_lowercase())
             .collect();
-        // Filter pain signals by keyword match (mirroring PainRegistry::get_pain_for_context)
         let all_signals = self.db.all_pain_signals();
-        let warnings: Vec<serde_json::Value> = all_signals
+        let mut scored: Vec<_> = all_signals
             .iter()
-            .filter(|s| {
-                s.trigger_keywords.iter().any(|trigger| {
-                    context_words
-                        .iter()
-                        .any(|ctx| ctx.contains(&trigger.to_lowercase()))
-                })
+            .filter_map(|s| {
+                let matched = s
+                    .trigger_keywords
+                    .iter()
+                    .filter(|trigger| {
+                        context_words
+                            .iter()
+                            .any(|ctx| ctx.contains(&trigger.to_lowercase()))
+                    })
+                    .count();
+                if matched > 0 {
+                    let relevance = matched as f32 / s.trigger_keywords.len().max(1) as f32;
+                    let score = s.intensity * relevance;
+                    Some((s, score))
+                } else {
+                    None
+                }
             })
-            .map(|s| {
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored
+            .iter()
+            .map(|(s, _)| {
                 json!({
                     "signal_id": s.id.to_string(),
                     "intensity": s.intensity,
                     "description": &s.description,
                 })
             })
-            .collect();
-        warnings
+            .collect()
     }
 
     /// §3: Store the conversation turn as an episodic memory.

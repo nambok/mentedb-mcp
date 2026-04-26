@@ -206,8 +206,10 @@ impl MenteDbServer {
         let mut llm_link_result = mentedb::EntityLinkResult::default();
         if let Some(cognitive_llm) = &self.cognitive_llm {
             let all_entities_with_context = self.db.entity_names_with_context();
-            let all_names: Vec<String> =
-                all_entities_with_context.iter().map(|(n, _)| n.clone()).collect();
+            let all_names: Vec<String> = all_entities_with_context
+                .iter()
+                .map(|(n, _)| n.clone())
+                .collect();
             let unresolved = self.db.unresolved_entity_names();
 
             if !unresolved.is_empty() {
@@ -219,14 +221,15 @@ impl MenteDbServer {
 
                 // Build EntityCandidate list with context for ALL entities
                 // (LLM needs full picture to group correctly)
-                let mut candidates: Vec<mentedb_cognitive::EntityCandidate> = all_entities_with_context
-                    .iter()
-                    .map(|(name, ctx)| mentedb_cognitive::EntityCandidate {
-                        name: name.clone(),
-                        context: ctx.clone(),
-                        memory_id: None,
-                    })
-                    .collect();
+                let mut candidates: Vec<mentedb_cognitive::EntityCandidate> =
+                    all_entities_with_context
+                        .iter()
+                        .map(|(name, ctx)| mentedb_cognitive::EntityCandidate {
+                            name: name.clone(),
+                            context: ctx.clone(),
+                            memory_id: None,
+                        })
+                        .collect();
                 // Sort for deterministic batching across runs
                 candidates.sort_by(|a, b| a.name.cmp(&b.name));
 

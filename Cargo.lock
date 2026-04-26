@@ -330,9 +330,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.60"
+version = "1.2.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43c5703da9466b66a946814e1adf53ea2c90f10063b86290cc9eb67ce3478a20"
+checksum = "d16d90359e986641506914ba71350897565610e87ce0ad9e6f28569db3dd5c6d"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1574,9 +1574,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.185"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libm"
@@ -1684,7 +1684,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf958b8b1c7644597f460f8aa81cc3fa823161b1ebb4ede1f72644a4cfcd610c"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-consolidation",
@@ -1703,7 +1705,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f4b8a6cb9db7b66a128170406a8928d451c0802e5f818b3723cbc01cf074ef6"
 dependencies = [
  "ahash",
  "crossbeam",
@@ -1718,7 +1722,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-consolidation"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a4273a0cef0f210ba077747a9e4696e5cf836fa723cd704f3991b37039b7cb4"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1729,7 +1735,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-context"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf1d0196ed628a00a332154df06701abd4a230055d06fe41e66f50ba70e6330"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1741,7 +1749,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9763e5ee62625fe07e0b262125b3642fb649a15963321fd3e594bbd206bfb703"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1756,7 +1766,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d9d136d90066df3a8cf769eef64d709f0e3bb1c610c8e789fe87aa6d5d3ae4a"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -1773,7 +1785,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "817ef2c3e29d2692de7efd036f6b502cfc20c9c748706ecc1981c483d31b01e5"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-core",
@@ -1789,7 +1803,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "604d7c2d56668ac820ed8954a4522c7b4819d39e0ebff40a3c3228de472079f6"
 dependencies = [
  "ahash",
  "bincode",
@@ -1804,7 +1820,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c116271684d9721c4621375fda46b1c9ffc41f689150b6d1bc2291cdc7da5235"
 dependencies = [
  "ahash",
  "bincode",
@@ -1850,7 +1868,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "846408321d610d73fa426412a30360c05411392beebc2d99fd47ac856846402e"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1861,7 +1881,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.7.2"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14d0d02755b3ec9a0c9ee716426627429fe0b9f0969ef766afc8d1390807b3c4"
 dependencies = [
  "ahash",
  "bincode",
@@ -2026,9 +2048,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onig"
-version = "6.5.1"
+version = "6.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "336b9c63443aceef14bea841b899035ae3abe89b7c486aaf4c5bd8aafedac3f0"
+checksum = "e9f0430136375a315630bfaf61d6bca71a048258b312be75f26f910fb4333e44"
 dependencies = [
  "bitflags",
  "libc",
@@ -2038,9 +2060,9 @@ dependencies = [
 
 [[package]]
 name = "onig_sys"
-version = "69.9.1"
+version = "69.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f86c6eef3d6df15f23bcfb6af487cbd2fed4e5581d58d5bf1f5f8b7f6727dc"
+checksum = "725f3ee364ae6d02cfca12ef2be392cfee2733c2a01f0ed386fb74fa94a0fd26"
 dependencies = [
  "cc",
  "pkg-config",
@@ -2620,9 +2642,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be040f8b0a225e40375822a563fa9524378b9d63112f53e19ffff34df5d33fdd"
+checksum = "30a7197ae7eb376e574fe940d068c30fe0462554a3ddbe4eca7838e049c937a9"
 dependencies = [
  "web-time",
  "zeroize",

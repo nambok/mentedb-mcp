@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1](https://github.com/nambok/mentedb-mcp/compare/v0.5.0...v0.5.1) - 2026-04-26
+
+### Other
+
+- release v0.5.0 ([#67](https://github.com/nambok/mentedb-mcp/pull/67))
+
 ## [0.5.0](https://github.com/nambok/mentedb-mcp/compare/v0.4.26...v0.5.0) - 2026-04-26
 
 ### Other

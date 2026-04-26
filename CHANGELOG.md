@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.4](https://github.com/nambok/mentedb-mcp/compare/v0.5.3...v0.5.4) - 2026-04-26
+
+### Added
+
+- Wire enrichment Phase 3 (communities) & Phase 4 (user model) ([#72](https://github.com/nambok/mentedb-mcp/pull/72))
+
 ## [0.5.3](https://github.com/nambok/mentedb-mcp/compare/v0.5.2...v0.5.3) - 2026-04-26
 
 ### Other

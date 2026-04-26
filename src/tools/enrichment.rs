@@ -33,6 +33,7 @@ impl MenteDbServer {
             Some(c) => c,
             None => {
                 tracing::warn!("enrichment skipped: no LLM provider configured");
+                self.db.mark_enrichment_complete(current_turn);
                 return;
             }
         };

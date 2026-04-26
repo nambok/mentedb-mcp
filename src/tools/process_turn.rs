@@ -1,71 +1,77 @@
 use super::*;
+use mentedb::process_turn::{ProcessTurnInput, ProcessTurnResult};
 
 impl MenteDbServer {
-    /// Build the final JSON response from all computed data.
-    fn assemble_response(
-        context_items: &[serde_json::Value],
-        stored_ids: &[String],
-        contradiction_count: usize,
-        pain_warnings: &[serde_json::Value],
-        proactive_recalls: &[serde_json::Value],
-        detected_actions: &[serde_json::Value],
-    ) -> String {
+    /// Build the final JSON response from a ProcessTurnResult.
+    fn assemble_response(result: &ProcessTurnResult) -> String {
         const CTX_MAX_CHARS: usize = 300;
-        let context_summaries: Vec<serde_json::Value> = context_items
+        let context_summaries: Vec<serde_json::Value> = result
+            .context
             .iter()
-            .filter_map(|ci| {
-                let content = ci.get("content").and_then(|c| c.as_str())?;
-                let id = ci.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                let memory_type = ci
-                    .get("memory_type")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("unknown");
-                let scope = ci
-                    .get("tags")
-                    .and_then(|t| t.as_array())
-                    .and_then(|tags| {
-                        tags.iter().find_map(|t| {
-                            let s = t.as_str()?;
-                            if s == "scope:always" {
-                                Some("always")
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .unwrap_or("contextual");
+            .take(10)
+            .map(|sm| {
+                let content = &sm.memory.content;
                 let truncated = if content.len() > CTX_MAX_CHARS {
                     format!(
                         "{}…",
                         &content[..content.floor_char_boundary(CTX_MAX_CHARS)]
                     )
                 } else {
-                    content.to_string()
+                    content.clone()
                 };
-                Some(json!({
-                    "id": id,
+                let scope = if sm.memory.tags.iter().any(|t| t == "scope:always") {
+                    "always"
+                } else {
+                    "contextual"
+                };
+                json!({
+                    "id": sm.memory.id.to_string(),
                     "content": truncated,
-                    "memory_type": memory_type,
+                    "memory_type": format!("{:?}", sm.memory.memory_type),
                     "scope": scope
-                }))
+                })
             })
             .collect();
 
         let mut response = json!({
             "ok": true,
             "context": context_summaries,
-            "stored": stored_ids.len(),
-            "contradictions": contradiction_count,
+            "stored": result.stored_ids.len(),
+            "contradictions": result.contradiction_count,
         });
 
-        if !pain_warnings.is_empty() {
-            response["pain_warnings"] = json!(pain_warnings);
+        if !result.pain_warnings.is_empty() {
+            response["pain_warnings"] = json!(result
+                .pain_warnings
+                .iter()
+                .map(|pw| json!({
+                    "signal_id": pw.signal_id.to_string(),
+                    "intensity": pw.intensity,
+                    "description": &pw.description,
+                }))
+                .collect::<Vec<_>>());
         }
-        if !proactive_recalls.is_empty() {
-            response["proactive_recalls"] = json!(proactive_recalls);
+        if !result.proactive_recalls.is_empty() {
+            response["proactive_recalls"] = json!(result
+                .proactive_recalls
+                .iter()
+                .map(|pr| json!({
+                    "memory_id": pr.memory_id.to_string(),
+                    "content": &pr.content,
+                    "relevance": pr.relevance,
+                    "action_type": &pr.action_type,
+                }))
+                .collect::<Vec<_>>());
         }
-        if !detected_actions.is_empty() {
-            response["detected_actions"] = json!(detected_actions);
+        if !result.detected_actions.is_empty() {
+            response["detected_actions"] = json!(result
+                .detected_actions
+                .iter()
+                .map(|da| json!({
+                    "action_type": &da.action_type,
+                    "detail": &da.detail,
+                }))
+                .collect::<Vec<_>>());
         }
 
         response.to_string()
@@ -93,119 +99,56 @@ impl MenteDbServer {
 
         let start = std::time::Instant::now();
 
-        // §1: Embedding + context retrieval
-        let query_embedding = self
-            .embedding_provider
-            .embed(&req.user_message)
-            .map_err(|e| McpError::internal_error(format!("Embedding failed: {e}"), None))?;
-        let (context_items, _current_ids, cache_hit) = self
-            .retrieve_context(&req.user_message, &query_embedding, &req)
-            .await;
+        // Build engine input
+        let input = ProcessTurnInput {
+            user_message: req.user_message.clone(),
+            assistant_response: req.assistant_response.clone(),
+            turn_id: req.turn_id,
+            project_context: req.project_context.clone(),
+            agent_id: Some(agent_id),
+        };
 
-        // §2: Pain signals
-        let pain_warnings = self.check_pain_signals(&req.user_message).await;
+        // Core pipeline: single call handles embedding, context retrieval,
+        // pain signals, episodic storage, write inference, fact extraction,
+        // action detection, proactive recall, corrections, sentiment,
+        // phantoms, trajectory, speculative cache, and maintenance.
+        let mut delta_tracker = self.delta_tracker.lock().await;
+        let result = self
+            .db
+            .process_turn(&input, &mut delta_tracker)
+            .map_err(|e| McpError::internal_error(format!("process_turn failed: {e}"), None))?;
+        drop(delta_tracker);
 
-        // §3: Store episodic turn
-        let (mut stored_ids, memory_id, conversation) =
-            self.store_episodic_turn(&req, agent_id).await;
-
-        // §4: Entity resolution
+        // LLM enrichment: entity resolution (if LLM configured)
+        let conversation = format!(
+            "User: {}\nAssistant: {}",
+            req.user_message,
+            req.assistant_response.as_deref().unwrap_or("")
+        );
         let entities_resolved = self.resolve_entities_llm(&conversation).await;
 
-        // §5: Write-time inference + LLM contradiction verification
-        let inference_applied = self.run_write_inference(memory_id, &stored_ids).await;
-
-        // §4b: Fact extraction
-        self.extract_and_store_facts(memory_id, &stored_ids).await;
-
-        // Action detection + proactive recall
-        let assistant_resp = req.assistant_response.as_deref().unwrap_or("");
-        let combined_text = format!("{} {}", req.user_message, assistant_resp).to_lowercase();
-        let detected_actions = Self::detect_actions(&combined_text);
-        let proactive_recalls = self.proactive_recall(&detected_actions).await;
-
-        // Auto-detect corrections
-        if let Some(ap_id) = self
-            .auto_detect_corrections(
-                &req.user_message,
-                assistant_resp,
-                agent_id,
-                req.project_context.as_deref(),
-            )
-            .await
-        {
-            stored_ids.push(ap_id);
-            tracing::info!(
-                turn_id = req.turn_id,
-                "auto-detected correction, stored anti-pattern"
-            );
-        }
-
-        // Sentiment
-        let sentiment_score = Self::analyze_sentiment(&req.user_message);
-
-        // §4c + §4d: Phantoms + stream contradiction check
-        let (phantom_count, contradiction_count) = self
-            .detect_phantoms_and_check_stream(
-                &conversation,
-                assistant_resp,
-                &context_items,
-                req.turn_id,
-            )
-            .await;
-
-        // §5: Trajectory + ghost memories
-        let predictions = self
-            .update_trajectory(
-                &req,
-                agent_id,
-                &stored_ids,
-                &detected_actions,
-                &combined_text,
-            )
-            .await;
-
-        // §6: Speculative cache
-        self.update_speculative_cache(&predictions).await;
-
-        // Auto-maintenance
-        self.maybe_run_maintenance(req.turn_id).await;
+        // LLM enrichment: contradiction verification on flagged contradictions
+        let llm_contradictions = self.verify_contradictions_llm(&result).await;
 
         let elapsed_ms = start.elapsed().as_millis();
         tracing::info!(
             turn_id = req.turn_id,
-            context_count = context_items.len(),
-            cache_hit,
-            memories_stored = stored_ids.len(),
-            inference_applied,
-            phantom_count,
-            contradiction_count,
-            pain_warnings = pain_warnings.len(),
-            elapsed_ms = elapsed_ms,
-            "process_turn complete"
-        );
-
-        let response = Self::assemble_response(
-            &context_items,
-            &stored_ids,
-            contradiction_count,
-            &pain_warnings,
-            &proactive_recalls,
-            &detected_actions,
-        );
-
-        tracing::info!(
-            turn_id = req.turn_id,
-            response_bytes = response.len(),
-            inference_applied,
+            context_count = result.context.len(),
+            cache_hit = result.cache_hit,
+            memories_stored = result.stored_ids.len(),
+            inference_actions = result.inference_actions,
+            phantom_count = result.phantom_count,
+            contradiction_count = result.contradiction_count,
+            pain_warnings = result.pain_warnings.len(),
             entities_resolved,
-            phantom_count,
-            cache_hit,
-            sentiment = sentiment_score,
-            predictions_count = predictions.len(),
-            "process_turn response"
+            llm_contradictions,
+            sentiment = result.sentiment,
+            predictions_count = result.predicted_topics.len(),
+            elapsed_ms = elapsed_ms,
+            "process_turn complete (engine)"
         );
 
+        let response = Self::assemble_response(&result);
         Ok(CallToolResult::success(vec![Content::text(response)]))
     }
 }

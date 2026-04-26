@@ -12,53 +12,32 @@ impl MenteDbServer {
         let min_cluster_size = req.min_cluster_size.unwrap_or(2);
         let similarity_threshold = req.similarity_threshold.unwrap_or(0.85);
 
-        let db = &*self.db;
-        let all = recall_all_memories(db);
-        let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
+        let candidates = self
+            .db
+            .find_consolidation_candidates(min_cluster_size, similarity_threshold)
+            .map_err(|e| McpError::internal_error(format!("Consolidation failed: {e}"), None))?;
 
-        if memories.is_empty() {
+        if candidates.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
-                json!({ "status": "no_memories", "clusters": [], "consolidated": [] }).to_string(),
+                json!({ "status": "no_clusters", "clusters": [], "consolidated": [] }).to_string(),
             )]));
         }
 
-        let engine = ConsolidationEngine::new();
-        let candidates = engine.find_candidates(&memories, min_cluster_size, similarity_threshold);
-
         let mut consolidated_results: Vec<serde_json::Value> = Vec::new();
         for candidate in &candidates {
-            let cluster_memories: Vec<&MemoryNode> = candidate
-                .memories
-                .iter()
-                .filter_map(|id| memories.iter().find(|m| m.id == *id))
-                .collect();
-            let cluster_owned: Vec<MemoryNode> = cluster_memories.into_iter().cloned().collect();
-            let consolidated = engine.consolidate(&cluster_owned);
-
-            // Store merged memory and remove sources
-            let agent_id = cluster_owned
-                .first()
-                .map(|m| m.agent_id)
-                .unwrap_or(AgentId(Uuid::nil()));
-            let merged = MemoryNode::new(
-                agent_id,
-                consolidated.new_type,
-                consolidated.summary.clone(),
-                consolidated.combined_embedding.clone(),
-            );
-            let _ = db.store(merged);
-            for source_id in &consolidated.source_memories {
-                let _ = db.forget(*source_id);
+            match self.db.consolidate_cluster(&candidate.memories) {
+                Ok(merged_id) => {
+                    consolidated_results.push(json!({
+                        "topic": candidate.topic,
+                        "avg_similarity": candidate.avg_similarity,
+                        "source_memory_ids": candidate.memories.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                        "merged_memory_id": merged_id.to_string(),
+                    }));
+                }
+                Err(e) => {
+                    tracing::warn!(topic = %candidate.topic, error = %e, "failed to consolidate cluster");
+                }
             }
-
-            consolidated_results.push(json!({
-                "topic": candidate.topic,
-                "avg_similarity": candidate.avg_similarity,
-                "source_memory_ids": candidate.memories.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                "merged_summary": consolidated.summary,
-                "new_type": format!("{:?}", consolidated.new_type),
-                "combined_confidence": consolidated.combined_confidence,
-            }));
         }
 
         tracing::info!(
@@ -70,7 +49,6 @@ impl MenteDbServer {
         Ok(CallToolResult::success(vec![Content::text(
             json!({
                 "status": "complete",
-                "total_memories_analyzed": memories.len(),
                 "clusters_found": candidates.len(),
                 "consolidated": consolidated_results,
             })
@@ -81,56 +59,18 @@ impl MenteDbServer {
     #[rmcp::tool(
         description = "Apply salience decay to all memories based on time and access patterns. Returns count of memories processed and those below archival threshold."
     )]
-    async fn apply_decay(
-        &self,
-        Parameters(req): Parameters<ApplyDecayRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        let half_life_hours = req.half_life_hours.unwrap_or(168.0); // 7 days
-        let half_life_us = (half_life_hours * 3600.0 * 1_000_000.0) as u64;
+    async fn apply_decay(&self) -> Result<CallToolResult, McpError> {
+        let updated = self
+            .db
+            .apply_decay_global()
+            .map_err(|e| McpError::internal_error(format!("Decay failed: {e}"), None))?;
 
-        let config = DecayConfig {
-            half_life_us,
-            ..DecayConfig::default()
-        };
-        let engine = DecayEngine::new(config);
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-
-        let db = &*self.db;
-        let all = recall_all_memories(db);
-        let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-        let total = memories.len();
-
-        engine.apply_decay_batch(&mut memories, now);
-
-        // Persist updated salience values
-        for mem in &memories {
-            let _ = db.store(mem.clone());
-        }
-
-        let archival_threshold = 0.1;
-        let below_threshold = memories
-            .iter()
-            .filter(|m| DecayEngine::needs_archival(m, archival_threshold))
-            .count();
-
-        tracing::info!(
-            processed = total,
-            below_threshold = below_threshold,
-            half_life_hours = half_life_hours,
-            "decay applied"
-        );
+        tracing::info!(updated, "decay applied globally");
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
                 "status": "complete",
-                "memories_processed": total,
-                "below_archival_threshold": below_threshold,
-                "archival_threshold": archival_threshold,
-                "half_life_hours": half_life_hours,
+                "memories_updated": updated,
             })
             .to_string(),
         )]))
@@ -151,8 +91,7 @@ impl MenteDbServer {
         let db = &*self.db;
         match find_memory_by_id(db, id) {
             Ok(Some(sm)) => {
-                let compressor = MemoryCompressor::new();
-                let compressed = compressor.compress(&sm.memory);
+                let compressed = self.db.compress_memory(&sm.memory);
                 let original_length = sm.memory.content.len();
 
                 // Persist compressed content
@@ -186,33 +125,11 @@ impl MenteDbServer {
     #[rmcp::tool(
         description = "Evaluate all memories for archival, deletion, or consolidation decisions based on salience and age thresholds."
     )]
-    async fn evaluate_archival(
-        &self,
-        Parameters(req): Parameters<EvaluateArchivalRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        let max_salience = req.salience_threshold.unwrap_or(0.1);
-        let min_age_us = req
-            .max_age_days
-            .map(|d| d * 24 * 3600 * 1_000_000)
-            .unwrap_or(7 * 24 * 3600 * 1_000_000);
-
-        let config = ArchivalConfig {
-            max_salience,
-            min_age_us,
-            ..ArchivalConfig::default()
-        };
-        let pipeline = ArchivalPipeline::new(config);
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-
-        let db = &*self.db;
-        let all = recall_all_memories(db);
-        let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-
-        let decisions = pipeline.evaluate_batch(&memories, now);
+    async fn evaluate_archival(&self) -> Result<CallToolResult, McpError> {
+        let decisions = self
+            .db
+            .evaluate_archival_global()
+            .map_err(|e| McpError::internal_error(format!("Archival eval failed: {e}"), None))?;
 
         let mut keep = Vec::new();
         let mut archive = Vec::new();
@@ -224,7 +141,7 @@ impl MenteDbServer {
             match decision {
                 ArchivalDecision::Keep => keep.push(id_str),
                 ArchivalDecision::Archive | ArchivalDecision::Delete => {
-                    let _ = db.forget(*id);
+                    let _ = self.db.forget(*id);
                     if matches!(decision, ArchivalDecision::Delete) {
                         delete.push(id_str);
                     } else {
@@ -369,7 +286,6 @@ impl MenteDbServer {
         };
 
         let engine = ForgetEngine::new();
-        // No edge listing API available; pass empty edges
         let result = engine.plan_forget(&forget_request, &memories, &[]);
 
         // Execute the actual deletion for matching memories

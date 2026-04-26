@@ -30,8 +30,7 @@ impl MenteDbServer {
             decay_rate: 0.1,
         };
 
-        let mut registry = self.pain_registry.lock().await;
-        registry.record_pain(signal);
+        self.db.record_pain(signal);
         tracing::info!(signal_id = %signal_id, memory_id = %memory_id, "pain signal recorded");
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -54,8 +53,7 @@ impl MenteDbServer {
         let known = req.known_entities.unwrap_or_default();
         let turn_id = req.turn_id.unwrap_or(0);
 
-        let mut tracker = self.phantom_tracker.lock().await;
-        let phantoms = tracker.detect_gaps(&req.content, &known, turn_id);
+        let phantoms = self.db.detect_phantoms(&req.content, &known, turn_id);
 
         let items: Vec<serde_json::Value> = phantoms
             .iter()
@@ -89,8 +87,7 @@ impl MenteDbServer {
             Err(e) => return error_result(&e),
         };
 
-        let mut tracker = self.phantom_tracker.lock().await;
-        tracker.resolve(phantom_id);
+        self.db.resolve_phantom(MemoryId::from(phantom_id));
         tracing::info!(phantom_id = %phantom_id, "phantom resolved");
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -126,9 +123,8 @@ impl MenteDbServer {
             timestamp: now,
         };
 
-        let mut tracker = self.trajectory_tracker.lock().await;
-        tracker.record_turn(node);
-        let trajectory_len = tracker.get_trajectory().len();
+        self.db.record_trajectory_turn(node);
+        let trajectory_len = self.db.get_trajectory().len();
         tracing::info!(
             turn_id = req.turn_id,
             trajectory_len,
@@ -149,8 +145,7 @@ impl MenteDbServer {
         description = "Predict likely next topics based on the current conversation trajectory."
     )]
     async fn predict_topics(&self) -> Result<CallToolResult, McpError> {
-        let tracker = self.trajectory_tracker.lock().await;
-        let predictions = tracker.predict_next_topics();
+        let predictions = self.db.predict_next_topics();
         tracing::info!(count = predictions.len(), "topic predictions generated");
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -165,9 +160,6 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<DetectInterferenceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let threshold = req.similarity_threshold.unwrap_or(0.8);
-        let detector = InterferenceDetector::new(threshold);
-
         let db = &*self.db;
         let mut memories: Vec<MemoryNode> = Vec::new();
         for id_str in &req.memory_ids {
@@ -186,7 +178,7 @@ impl MenteDbServer {
             }
         }
 
-        let pairs = detector.detect_interference(&memories);
+        let pairs = self.db.detect_interference(&memories);
         let items: Vec<serde_json::Value> = pairs
             .iter()
             .map(|p| {
@@ -212,9 +204,8 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<RegisterEntityRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let mut tracker = self.phantom_tracker.lock().await;
         tracing::info!(name = %req.name, entity_type = %req.entity_type, "registering entity");
-        tracker.register_entity(&req.name);
+        self.db.register_entity(&req.name);
         Ok(CallToolResult::success(vec![Content::text(
             json!({
                 "status": "registered",
@@ -229,15 +220,9 @@ impl MenteDbServer {
         description = "Get the current cognitive state including pain signals, phantom memories, and trajectory predictions."
     )]
     async fn get_cognitive_state(&self) -> Result<CallToolResult, McpError> {
-        let pain = self.pain_registry.lock().await;
-        let phantom = self.phantom_tracker.lock().await;
-        let trajectory = self.trajectory_tracker.lock().await;
-        let cache = self.speculative_cache.lock().await;
-        let cache_stats = cache.stats();
-        drop(cache);
-
-        let active_pain: Vec<serde_json::Value> = pain
-            .all_signals()
+        let active_pain: Vec<serde_json::Value> = self
+            .db
+            .all_pain_signals()
             .iter()
             .map(|s| {
                 json!({
@@ -248,7 +233,8 @@ impl MenteDbServer {
             })
             .collect();
 
-        let phantoms: Vec<serde_json::Value> = phantom
+        let phantoms: Vec<serde_json::Value> = self
+            .db
             .get_active_phantoms()
             .iter()
             .map(|p| {
@@ -259,7 +245,8 @@ impl MenteDbServer {
             })
             .collect();
 
-        let trajectory_info = trajectory.get_resume_context();
+        let trajectory_info = self.db.get_resume_context();
+        let cache_stats = self.db.speculative_cache_stats();
 
         let result = json!({
             "pain_signals": active_pain,

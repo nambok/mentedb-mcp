@@ -17,15 +17,8 @@ use std::sync::Arc;
 
 use mentedb::MenteDb;
 use mentedb_cognitive::trajectory::DecisionState;
-use mentedb_cognitive::{
-    CognitionStream, CognitiveLlmService, InterferenceDetector, PainRegistry, PainSignal,
-    PhantomConfig, PhantomTracker, SpeculativeCache, StreamConfig, TrajectoryNode,
-    TrajectoryTracker, WriteInferenceEngine,
-};
-use mentedb_consolidation::{
-    ArchivalConfig, ArchivalDecision, ArchivalPipeline, ConsolidationEngine, DecayConfig,
-    DecayEngine, FactExtractor, ForgetEngine, ForgetRequest, MemoryCompressor,
-};
+use mentedb_cognitive::{CognitiveLlmService, PainSignal, TrajectoryNode};
+use mentedb_consolidation::{ArchivalDecision, FactExtractor, ForgetEngine, ForgetRequest};
 use mentedb_context::{AssemblyConfig, ContextAssembler, DeltaTracker, OutputFormat, ScoredMemory};
 use mentedb_core::edge::EdgeType;
 use mentedb_core::memory::{AttributeValue, MemoryType};
@@ -73,10 +66,6 @@ pub(crate) fn parse_decision_state(s: &str) -> DecisionState {
 pub struct MenteDbServer {
     db: Arc<MenteDb>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    pain_registry: Arc<Mutex<PainRegistry>>,
-    phantom_tracker: Arc<Mutex<PhantomTracker>>,
-    trajectory_tracker: Arc<Mutex<TrajectoryTracker>>,
-    speculative_cache: Arc<Mutex<SpeculativeCache>>,
     delta_tracker: Arc<Mutex<DeltaTracker>>,
     /// LLM-powered cognitive service for contradiction verification,
     /// entity resolution, and topic canonicalization.
@@ -216,10 +205,6 @@ impl MenteDbServer {
         Self {
             db: Arc::new(db),
             embedding_provider,
-            pain_registry: Arc::new(Mutex::new(PainRegistry::new(100))),
-            phantom_tracker: Arc::new(Mutex::new(PhantomTracker::new(PhantomConfig::default()))),
-            trajectory_tracker: Arc::new(Mutex::new(TrajectoryTracker::new(100))),
-            speculative_cache: Arc::new(Mutex::new(SpeculativeCache::new(64, 0.5, 0.6))),
             delta_tracker: Arc::new(Mutex::new(DeltaTracker::new())),
             cognitive_llm,
             using_hash_fallback,

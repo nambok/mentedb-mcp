@@ -118,25 +118,9 @@ pub struct ConsolidateMemoriesRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ApplyDecayRequest {
-    #[schemars(description = "Half-life in hours for salience decay (default: 168, i.e. 7 days)")]
-    pub half_life_hours: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompressMemoryRequest {
     #[schemars(description = "UUID of the memory to compress")]
     pub id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EvaluateArchivalRequest {
-    #[schemars(
-        description = "Salience threshold below which memories are candidates for archival (default: 0.1)"
-    )]
-    pub salience_threshold: Option<f32>,
-    #[schemars(description = "Maximum age in days before considering archival (default: 7)")]
-    pub max_age_days: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -221,7 +205,8 @@ pub struct RecordTrajectoryRequest {
 pub struct DetectInterferenceRequest {
     #[schemars(description = "List of memory UUIDs to check for interference")]
     pub memory_ids: Vec<String>,
-    #[schemars(description = "Optional similarity threshold (default: 0.8)")]
+    #[schemars(description = "Similarity threshold (reserved for future use)")]
+    #[allow(dead_code)]
     pub similarity_threshold: Option<f32>,
 }
 

@@ -10,11 +10,10 @@ impl MenteDbServer {
         query_embedding: &[f32],
         req: &ProcessTurnRequest,
     ) -> (Vec<serde_json::Value>, Vec<MemoryId>, bool) {
-        let mut cache = self.speculative_cache.lock().await;
-        let cache_result = cache
-            .try_hit(user_message, Some(query_embedding))
+        let cache_result = self
+            .db
+            .try_speculative_hit(user_message, Some(query_embedding))
             .map(|entry| (entry.memory_ids.clone(), entry.topic.clone()));
-        drop(cache);
         let cache_hit = cache_result.is_some();
 
         // Try cache first — resolve cached IDs directly without loading all memories
@@ -108,14 +107,21 @@ impl MenteDbServer {
 
     /// §2: Check pain signals against the current user message.
     pub(super) async fn check_pain_signals(&self, user_message: &str) -> Vec<serde_json::Value> {
-        let pain_registry = self.pain_registry.lock().await;
         let context_words: Vec<String> = user_message
             .split_whitespace()
             .map(|w| w.to_lowercase())
             .collect();
-        let warnings: Vec<serde_json::Value> = pain_registry
-            .get_pain_for_context(&context_words)
+        // Filter pain signals by keyword match (mirroring PainRegistry::get_pain_for_context)
+        let all_signals = self.db.all_pain_signals();
+        let warnings: Vec<serde_json::Value> = all_signals
             .iter()
+            .filter(|s| {
+                s.trigger_keywords.iter().any(|trigger| {
+                    context_words
+                        .iter()
+                        .any(|ctx| ctx.contains(&trigger.to_lowercase()))
+                })
+            })
             .map(|s| {
                 json!({
                     "signal_id": s.id.to_string(),
@@ -124,7 +130,6 @@ impl MenteDbServer {
                 })
             })
             .collect();
-        drop(pain_registry);
         warnings
     }
 
@@ -222,7 +227,7 @@ impl MenteDbServer {
             .map(|sm| sm.memory)
             .collect();
 
-        let engine = WriteInferenceEngine::new();
+        let engine = mentedb_cognitive::WriteInferenceEngine::new();
         let actions = engine.infer_on_write(&target, &existing, &[]);
 
         let now = std::time::SystemTime::now()

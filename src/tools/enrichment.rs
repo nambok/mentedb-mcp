@@ -188,15 +188,105 @@ impl MenteDbServer {
             }
         }
 
-        // Phase 2: Entity linking — create edges between same-name entities
-        let link_result = match self.db.link_entities() {
+        // Phase 2: LLM-powered entity linking
+        //
+        // 1. Sync path: link entities already resolved by EntityResolver cache
+        // 2. LLM path: send ALL unresolved entity names to LLM for resolution
+        // 3. Apply LLM results: create edges + cache for next time
+        let sync_link_result = match self.db.link_entities() {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!(error = %e, "enrichment: entity linking failed");
+                tracing::error!(error = %e, "enrichment: sync entity linking failed");
                 mentedb::EntityLinkResult::default()
             }
         };
-        total_edges += link_result.edges_created;
+        total_edges += sync_link_result.edges_created;
+
+        // LLM entity resolution: send unresolved entities to LLM
+        let mut llm_link_result = mentedb::EntityLinkResult::default();
+        if let Some(cognitive_llm) = &self.cognitive_llm {
+            let all_entities_with_context = self.db.entity_names_with_context();
+            let all_names: Vec<String> =
+                all_entities_with_context.iter().map(|(n, _)| n.clone()).collect();
+            let unresolved = self.db.unresolved_entity_names();
+
+            if !unresolved.is_empty() {
+                tracing::info!(
+                    total_entities = all_names.len(),
+                    unresolved = unresolved.len(),
+                    "running LLM entity resolution"
+                );
+
+                // Build EntityCandidate list with context for ALL entities
+                // (LLM needs full picture to group correctly)
+                let candidates: Vec<mentedb_cognitive::EntityCandidate> = all_entities_with_context
+                    .iter()
+                    .map(|(name, ctx)| mentedb_cognitive::EntityCandidate {
+                        name: name.clone(),
+                        context: ctx.clone(),
+                        memory_id: None,
+                    })
+                    .collect();
+
+                // Batch into groups of 50 to avoid context limit issues
+                let batch_size = 50;
+                let mut all_merge_groups = Vec::new();
+
+                for chunk in candidates.chunks(batch_size) {
+                    match cognitive_llm.resolve_entities(chunk).await {
+                        Ok(groups) => {
+                            all_merge_groups.extend(groups);
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "enrichment: LLM entity resolution failed");
+                        }
+                    }
+                }
+
+                if !all_merge_groups.is_empty() {
+                    // Convert LLM merge groups to engine resolution format
+                    let resolutions: Vec<mentedb::EntityLinkResolution> = all_merge_groups
+                        .iter()
+                        .map(|g| mentedb::EntityLinkResolution {
+                            canonical: g.canonical.clone(),
+                            aliases: g.aliases.clone(),
+                            confidence: g.confidence,
+                        })
+                        .collect();
+
+                    // Identify entities NOT in any merge group → confirmed singletons.
+                    // If two unresolved entities are both absent from merge groups,
+                    // the LLM implicitly said they're different.
+                    let mut grouped_names: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    for g in &all_merge_groups {
+                        grouped_names.insert(g.canonical.to_lowercase());
+                        for a in &g.aliases {
+                            grouped_names.insert(a.to_lowercase());
+                        }
+                    }
+                    // We don't negative-cache singletons against each other
+                    // because they might just not have been seen together yet.
+                    let separations: Vec<mentedb::EntitySeparation> = Vec::new();
+
+                    match self
+                        .db
+                        .apply_entity_link_resolutions(&resolutions, &separations)
+                    {
+                        Ok(r) => {
+                            llm_link_result = r;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                "enrichment: failed to apply entity resolutions"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        total_edges += llm_link_result.edges_created;
 
         self.db.mark_enrichment_complete(current_turn);
 
@@ -204,8 +294,9 @@ impl MenteDbServer {
             stored = total_stored,
             edges = total_edges,
             entities = total_entities,
-            entities_linked = link_result.linked,
-            entities_ambiguous = link_result.ambiguous,
+            sync_linked = sync_link_result.linked,
+            llm_linked = llm_link_result.linked,
+            llm_edges = llm_link_result.edges_created,
             duplicates_skipped = total_dupes,
             contradictions = total_contradictions,
             batches = batches.len(),

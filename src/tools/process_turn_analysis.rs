@@ -206,15 +206,13 @@ impl MenteDbServer {
         turn_id: u64,
     ) -> (usize, usize) {
         // Phantom detection
-        let mut phantom_tracker = self.phantom_tracker.lock().await;
         let known: Vec<String> = context_items
             .iter()
             .filter_map(|ci| ci.get("content").and_then(|c| c.as_str()))
             .flat_map(|c| c.split_whitespace().map(|w| w.to_lowercase()))
             .collect();
-        let phantoms = phantom_tracker.detect_gaps(conversation, &known, turn_id);
+        let phantoms = self.db.detect_phantoms(conversation, &known, turn_id);
         let phantom_count = phantoms.len();
-        drop(phantom_tracker);
 
         // Stream contradiction check
         let known_facts: Vec<(MemoryId, String)> = context_items
@@ -227,9 +225,8 @@ impl MenteDbServer {
             })
             .collect();
         let contradiction_count = if !known_facts.is_empty() {
-            let stream = CognitionStream::with_config(StreamConfig::default());
-            stream.feed_token(assistant_resp);
-            let alerts = stream.check_alerts(&known_facts);
+            self.db.feed_stream_token(assistant_resp);
+            let alerts = self.db.check_stream_alerts(&known_facts);
             alerts
                 .iter()
                 .filter(|a| matches!(a, mentedb_cognitive::StreamAlert::Contradiction { .. }))
@@ -262,12 +259,7 @@ impl MenteDbServer {
             req.user_message.clone()
         };
         let topic_summary = if let Some(ref llm) = self.cognitive_llm {
-            let tracker = self.trajectory_tracker.lock().await;
-            let existing_topics = tracker
-                .predict_next_topics()
-                .into_iter()
-                .collect::<Vec<_>>();
-            drop(tracker);
+            let existing_topics = self.db.predict_next_topics();
             match llm.canonicalize_topic(&raw_topic, &existing_topics).await {
                 Ok(label) => {
                     tracing::debug!(raw = %raw_topic, canonical = %label.topic, "topic canonicalized");
@@ -296,10 +288,8 @@ impl MenteDbServer {
                 .unwrap_or_default()
                 .as_micros() as u64,
         };
-        let mut tracker = self.trajectory_tracker.lock().await;
-        tracker.record_turn(node);
-        let predictions: Vec<String> = tracker.predict_next_topics().into_iter().collect();
-        drop(tracker);
+        self.db.record_trajectory_turn(node);
+        let predictions: Vec<String> = self.db.predict_next_topics();
 
         // Ghost memory inference
         let speculation_indicators = [
@@ -356,23 +346,22 @@ impl MenteDbServer {
         let embed_provider = Arc::clone(&self.embedding_provider);
         let db = &*self.db;
 
-        let mut cache = self.speculative_cache.lock().await;
-        cache.pre_assemble(predictions.to_vec(), |topic| {
-            let topic_emb = embed_provider.embed(topic).ok()?;
-            let similar_ids = db.recall_similar(&topic_emb, 5).ok()?;
-            let results = resolve_memory_ids(db, &similar_ids);
-            if results.is_empty() {
-                return None;
-            }
-            let context_text = results
-                .iter()
-                .map(|sm| sm.memory.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n---\n");
-            let memory_ids: Vec<MemoryId> = results.iter().map(|sm| sm.memory.id).collect();
-            Some((context_text, memory_ids, None))
-        });
-        drop(cache);
+        self.db
+            .pre_assemble_speculative(predictions.to_vec(), |topic| {
+                let topic_emb = embed_provider.embed(topic).ok()?;
+                let similar_ids = db.recall_similar(&topic_emb, 5).ok()?;
+                let results = resolve_memory_ids(db, &similar_ids);
+                if results.is_empty() {
+                    return None;
+                }
+                let context_text = results
+                    .iter()
+                    .map(|sm| sm.memory.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
+                let memory_ids: Vec<MemoryId> = results.iter().map(|sm| sm.memory.id).collect();
+                Some((context_text, memory_ids, None))
+            });
     }
 
     /// Auto-maintenance: decay, archival, consolidation on staggered intervals.
@@ -383,92 +372,56 @@ impl MenteDbServer {
 
         // Every 50 turns: apply salience decay
         if turn_id.is_multiple_of(50) {
-            let half_life_us = (168.0 * 3600.0 * 1_000_000.0) as u64;
-            let config = DecayConfig {
-                half_life_us,
-                ..DecayConfig::default()
-            };
-            let decay_engine = DecayEngine::new(config);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64;
-            let db = &*self.db;
-            let all = recall_all_memories(db);
-            let mut memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-            decay_engine.apply_decay_batch(&mut memories, now);
-            for mem in &memories {
-                let _ = db.store(mem.clone());
+            match self.db.apply_decay_global() {
+                Ok(updated) => {
+                    tracing::info!(turn_id, updated, "auto-maintenance: applied salience decay");
+                }
+                Err(e) => {
+                    tracing::warn!(turn_id, error = %e, "auto-maintenance: decay failed");
+                }
             }
-            tracing::info!(turn_id, "auto-maintenance: applied salience decay");
         }
 
         // Every 100 turns: evaluate archival and delete stale memories
         if turn_id.is_multiple_of(100) {
-            let config = ArchivalConfig {
-                max_salience: 0.1,
-                min_age_us: 7 * 24 * 3600 * 1_000_000,
-                ..ArchivalConfig::default()
-            };
-            let pipeline = ArchivalPipeline::new(config);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64;
-            let db = &*self.db;
-            let all = recall_all_memories(db);
-            let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-            let decisions = pipeline.evaluate_batch(&memories, now);
-            let mut archived = 0u64;
-            for (id, decision) in &decisions {
-                if matches!(
-                    decision,
-                    ArchivalDecision::Delete | ArchivalDecision::Archive
-                ) {
-                    let _ = db.forget(*id);
-                    archived += 1;
+            match self.db.evaluate_archival_global() {
+                Ok(decisions) => {
+                    let mut archived = 0u64;
+                    for (id, decision) in &decisions {
+                        if matches!(
+                            decision,
+                            ArchivalDecision::Delete | ArchivalDecision::Archive
+                        ) {
+                            let _ = self.db.forget(*id);
+                            archived += 1;
+                        }
+                    }
+                    tracing::info!(turn_id, archived, "auto-maintenance: evaluated archival");
+                }
+                Err(e) => {
+                    tracing::warn!(turn_id, error = %e, "auto-maintenance: archival eval failed");
                 }
             }
-            tracing::info!(turn_id, archived, "auto-maintenance: evaluated archival");
         }
 
         // Every 200 turns: consolidate similar memories
         if turn_id.is_multiple_of(200) {
-            let db = &*self.db;
-            let all = recall_all_memories(db);
-            let memories: Vec<MemoryNode> = all.into_iter().map(|sm| sm.memory).collect();
-            if memories.len() >= 2 {
-                let consolidation_engine = ConsolidationEngine::new();
-                let candidates = consolidation_engine.find_candidates(&memories, 2, 0.85);
-                for candidate in &candidates {
-                    let cluster_memories: Vec<&MemoryNode> = candidate
-                        .memories
-                        .iter()
-                        .filter_map(|id| memories.iter().find(|m| m.id == *id))
-                        .collect();
-                    let cluster_owned: Vec<MemoryNode> =
-                        cluster_memories.into_iter().cloned().collect();
-                    let consolidated = consolidation_engine.consolidate(&cluster_owned);
-                    let agent_id = cluster_owned
-                        .first()
-                        .map(|m| m.agent_id)
-                        .unwrap_or(AgentId(Uuid::nil()));
-                    let merged = MemoryNode::new(
-                        agent_id,
-                        consolidated.new_type,
-                        consolidated.summary,
-                        consolidated.combined_embedding,
-                    );
-                    let _ = db.store(merged);
-                    for source_id in &consolidated.source_memories {
-                        let _ = db.forget(*source_id);
+            match self.db.find_consolidation_candidates(2, 0.85) {
+                Ok(candidates) => {
+                    for candidate in &candidates {
+                        if let Err(e) = self.db.consolidate_cluster(&candidate.memories) {
+                            tracing::warn!(error = %e, "auto-maintenance: consolidation failed for cluster");
+                        }
                     }
+                    tracing::info!(
+                        turn_id,
+                        clusters = candidates.len(),
+                        "auto-maintenance: consolidated memories"
+                    );
                 }
-                tracing::info!(
-                    turn_id,
-                    clusters = candidates.len(),
-                    "auto-maintenance: consolidated memories"
-                );
+                Err(e) => {
+                    tracing::warn!(turn_id, error = %e, "auto-maintenance: consolidation failed");
+                }
             }
         }
     }

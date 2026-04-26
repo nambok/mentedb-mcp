@@ -124,12 +124,9 @@ impl ServerHandler for MenteDbServer {
         }
 
         if uri_str == "mentedb://cognitive/state" {
-            let pain = self.pain_registry.lock().await;
-            let phantom = self.phantom_tracker.lock().await;
-            let trajectory = self.trajectory_tracker.lock().await;
-
-            let active_pain: Vec<serde_json::Value> = pain
-                .get_pain_for_context(&[])
+            let active_pain: Vec<serde_json::Value> = self
+                .db
+                .all_pain_signals()
                 .iter()
                 .map(|s| {
                     json!({
@@ -140,7 +137,8 @@ impl ServerHandler for MenteDbServer {
                 })
                 .collect();
 
-            let phantoms: Vec<serde_json::Value> = phantom
+            let phantoms: Vec<serde_json::Value> = self
+                .db
                 .get_active_phantoms()
                 .iter()
                 .map(|p| {
@@ -151,7 +149,7 @@ impl ServerHandler for MenteDbServer {
                 })
                 .collect();
 
-            let trajectory_info = trajectory.get_resume_context();
+            let trajectory_info = self.db.get_resume_context();
 
             let result = json!({
                 "pain_signals": active_pain,

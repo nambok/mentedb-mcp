@@ -1,6 +1,6 @@
 [package]
 name = "mentedb-mcp"
-version = "0.4.26"
+version = "0.5.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "MCP server for MenteDB, the cognition aware database for AI agent memory"
@@ -30,14 +30,14 @@ open = "5"
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 
 # Local mode dependencies (heavy - embedded DB, embeddings, LLM extraction)
-mentedb = { version = "0.6", optional = true }
-mentedb-core = { version = "0.6", optional = true }
-mentedb-graph = { version = "0.6", optional = true }
-mentedb-cognitive = { version = "0.6", optional = true }
-mentedb-context = { version = "0.6", optional = true }
-mentedb-embedding = { version = "0.6", features = ["local"], optional = true }
-mentedb-extraction = { version = "0.6", optional = true }
-mentedb-consolidation = { version = "0.6", optional = true }
+mentedb = { version = "0.7", optional = true }
+mentedb-core = { version = "0.7", optional = true }
+mentedb-graph = { version = "0.7", optional = true }
+mentedb-cognitive = { version = "0.7", optional = true }
+mentedb-context = { version = "0.7", optional = true }
+mentedb-embedding = { version = "0.7", features = ["local"], optional = true }
+mentedb-extraction = { version = "0.7", optional = true }
+mentedb-consolidation = { version = "0.7", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]

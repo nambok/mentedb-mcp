@@ -9,8 +9,7 @@ impl MenteDbServer {
         &self,
         Parameters(req): Parameters<CheckStreamRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let stream = CognitionStream::with_config(StreamConfig::default());
-        stream.feed_token(&req.text);
+        self.db.feed_stream_token(&req.text);
 
         let facts: Vec<(MemoryId, String)> = req
             .known_facts
@@ -22,7 +21,7 @@ impl MenteDbServer {
             })
             .collect();
 
-        let alerts = stream.check_alerts(&facts);
+        let alerts = self.db.check_stream_alerts(&facts);
         let items: Vec<serde_json::Value> = alerts
             .iter()
             .map(|a| match a {
@@ -93,7 +92,7 @@ impl MenteDbServer {
             .map(|sm| sm.memory)
             .collect();
 
-        let engine = WriteInferenceEngine::new();
+        let engine = mentedb_cognitive::WriteInferenceEngine::new();
         let actions = engine.infer_on_write(&target_memory, &existing, &[]);
 
         let now = std::time::SystemTime::now()

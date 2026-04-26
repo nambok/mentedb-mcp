@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use mentedb::MenteDb;
+use mentedb::{CognitiveConfig, MenteDb};
 use rmcp::ServiceExt;
 use rmcp::transport::io::stdio;
 
@@ -93,7 +93,7 @@ fn open_with_retry(
     delay: std::time::Duration,
 ) -> anyhow::Result<MenteDb> {
     for attempt in 1..=max_attempts {
-        match MenteDb::open(path) {
+        match MenteDb::open_with_config(path, CognitiveConfig::default()) {
             Ok(db) => return Ok(db),
             Err(e) => {
                 let msg = e.to_string();

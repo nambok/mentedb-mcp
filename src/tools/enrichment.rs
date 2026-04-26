@@ -71,6 +71,7 @@ impl MenteDbServer {
         let mut total_edges = 0usize;
         let mut total_dupes = 0usize;
         let mut total_contradictions = 0usize;
+        let mut total_entities = 0usize;
 
         for (batch_idx, batch) in batches.iter().enumerate() {
             let conversation = batch
@@ -132,6 +133,36 @@ impl MenteDbServer {
                         nodes.push(node);
                     }
 
+                    // Build MemoryNode objects from extracted entities
+                    for entity in &result.entities {
+                        let content = entity.to_content();
+                        let embedding_text = entity.embedding_key();
+                        let embedding = match self.embedding_provider.embed(&embedding_text) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "enrichment: entity embedding failed");
+                                continue;
+                            }
+                        };
+                        let mut node = MemoryNode::new(
+                            AgentId::nil(),
+                            MemoryType::Semantic,
+                            content,
+                            embedding,
+                        );
+                        let name_lower = entity.name.to_lowercase();
+                        node.tags.push(format!("entity:{}", name_lower));
+                        node.tags
+                            .push(format!("entity_type:{}", entity.entity_type));
+                        if let Some(cat) = entity.attributes.get("category") {
+                            for c in cat.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                                node.tags.push(format!("category:{}", c.to_lowercase()));
+                            }
+                        }
+                        nodes.push(node);
+                        total_entities += 1;
+                    }
+
                     match self.db.store_enrichment_memories(nodes, &source_ids) {
                         Ok((stored, edges)) => {
                             total_stored += stored;
@@ -156,11 +187,24 @@ impl MenteDbServer {
             }
         }
 
+        // Phase 2: Entity linking — create edges between same-name entities
+        let link_result = match self.db.link_entities() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "enrichment: entity linking failed");
+                mentedb::EntityLinkResult::default()
+            }
+        };
+        total_edges += link_result.edges_created;
+
         self.db.mark_enrichment_complete(current_turn);
 
         tracing::info!(
             stored = total_stored,
             edges = total_edges,
+            entities = total_entities,
+            entities_linked = link_result.linked,
+            entities_ambiguous = link_result.ambiguous,
             duplicates_skipped = total_dupes,
             contradictions = total_contradictions,
             batches = batches.len(),

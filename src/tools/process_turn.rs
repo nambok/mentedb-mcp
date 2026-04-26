@@ -136,6 +136,11 @@ impl MenteDbServer {
         // LLM enrichment: contradiction verification on flagged contradictions
         let llm_contradictions = self.verify_contradictions_llm(&result).await;
 
+        // Sleeptime enrichment: run extraction pipeline if triggered
+        if result.enrichment_pending {
+            self.maybe_run_enrichment(req.turn_id).await;
+        }
+
         let elapsed_ms = start.elapsed().as_millis();
         tracing::info!(
             turn_id = req.turn_id,

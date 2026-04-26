@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use mentedb::{CognitiveConfig, MenteDb};
+use mentedb::{CognitiveConfig, EnrichmentConfig, MenteDb};
 use rmcp::ServiceExt;
 use rmcp::transport::io::stdio;
 
@@ -19,10 +19,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     // Retry opening the database with a timeout to handle lock contention
     // (e.g., another instance is shutting down)
+    let has_llm = config.llm_provider != "mock";
     let db = open_with_retry(
         Path::new(&config.data_dir),
         5,
         std::time::Duration::from_secs(1),
+        has_llm,
     )?;
     let server = MenteDbServer::new(db, config);
 
@@ -91,9 +93,21 @@ fn open_with_retry(
     path: &Path,
     max_attempts: u32,
     delay: std::time::Duration,
+    enable_enrichment: bool,
 ) -> anyhow::Result<MenteDb> {
+    let cognitive_config = if enable_enrichment {
+        CognitiveConfig {
+            enrichment_config: EnrichmentConfig {
+                enabled: true,
+                ..EnrichmentConfig::default()
+            },
+            ..CognitiveConfig::default()
+        }
+    } else {
+        CognitiveConfig::default()
+    };
     for attempt in 1..=max_attempts {
-        match MenteDb::open_with_config(path, CognitiveConfig::default()) {
+        match MenteDb::open_with_config(path, cognitive_config.clone()) {
             Ok(db) => return Ok(db),
             Err(e) => {
                 let msg = e.to_string();

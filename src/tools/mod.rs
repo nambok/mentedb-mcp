@@ -1,6 +1,7 @@
 mod cognitive;
 mod consolidation;
 mod context;
+mod enrichment;
 mod graph;
 mod handler;
 mod inference;

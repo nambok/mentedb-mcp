@@ -1685,13 +1685,14 @@ dependencies = [
 [[package]]
 name = "mentedb"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "mentedb-cognitive 0.8.0",
  "mentedb-consolidation 0.8.0",
  "mentedb-context 0.8.0",
  "mentedb-core 0.8.0",
  "mentedb-embedding 0.8.0",
- "mentedb-extraction 0.8.0",
+ "mentedb-extraction 0.8.0 (git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4)",
  "mentedb-graph 0.8.0",
  "mentedb-index",
  "mentedb-query",
@@ -1705,6 +1706,7 @@ dependencies = [
 [[package]]
 name = "mentedb-cognitive"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "crossbeam",
@@ -1737,6 +1739,7 @@ dependencies = [
 [[package]]
 name = "mentedb-consolidation"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "mentedb-core 0.8.0",
@@ -1761,6 +1764,7 @@ dependencies = [
 [[package]]
 name = "mentedb-context"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "mentedb-core 0.8.0",
@@ -1787,6 +1791,7 @@ dependencies = [
 [[package]]
 name = "mentedb-core"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1819,6 +1824,7 @@ dependencies = [
 [[package]]
 name = "mentedb-embedding"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "mentedb-core 0.8.0",
  "serde",
@@ -1850,22 +1856,6 @@ dependencies = [
 [[package]]
 name = "mentedb-extraction"
 version = "0.8.0"
-dependencies = [
- "mentedb-cognitive 0.8.0",
- "mentedb-core 0.8.0",
- "mentedb-embedding 0.8.0",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mentedb-extraction"
-version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "817ef2c3e29d2692de7efd036f6b502cfc20c9c748706ecc1981c483d31b01e5"
 dependencies = [
@@ -1882,8 +1872,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mentedb-extraction"
+version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
+dependencies = [
+ "mentedb-cognitive 0.8.0",
+ "mentedb-core 0.8.0",
+ "mentedb-embedding 0.8.0",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mentedb-graph"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "bincode",
@@ -1916,6 +1924,7 @@ dependencies = [
 [[package]]
 name = "mentedb-index"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "bincode",
@@ -1941,7 +1950,7 @@ dependencies = [
  "mentedb-cognitive 0.8.1",
  "mentedb-consolidation 0.8.1",
  "mentedb-context 0.8.1",
- "mentedb-core 0.8.1",
+ "mentedb-core 0.8.0",
  "mentedb-embedding 0.8.1",
  "mentedb-extraction 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "mentedb-graph 0.8.1",
@@ -1962,6 +1971,7 @@ dependencies = [
 [[package]]
 name = "mentedb-query"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "mentedb-core 0.8.0",
  "serde",
@@ -1973,6 +1983,7 @@ dependencies = [
 [[package]]
 name = "mentedb-storage"
 version = "0.8.0"
+source = "git+https://github.com/nambok/mentedb?branch=feat%2Fenrichment-phase3-4#0779d6fdb993d33b7d2113579316647d2e01e81b"
 dependencies = [
  "ahash",
  "bincode",

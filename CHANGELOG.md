@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.2](https://github.com/nambok/mentedb-mcp/compare/v0.5.1...v0.5.2) - 2026-04-26
+
+### Fixed
+
+- cargo fmt
+- use graph().find_all_contradictions instead of get_edges
+- update mentedb deps to 0.7.1 for process_turn API
+
+### Other
+
+- use engine process_turn, remove 820 lines of manual orchestration
+
 ## [0.5.1](https://github.com/nambok/mentedb-mcp/compare/v0.5.0...v0.5.1) - 2026-04-26
 
 ### Other

@@ -41,37 +41,43 @@ impl MenteDbServer {
         });
 
         if !result.pain_warnings.is_empty() {
-            response["pain_warnings"] = json!(result
-                .pain_warnings
-                .iter()
-                .map(|pw| json!({
-                    "signal_id": pw.signal_id.to_string(),
-                    "intensity": pw.intensity,
-                    "description": &pw.description,
-                }))
-                .collect::<Vec<_>>());
+            response["pain_warnings"] = json!(
+                result
+                    .pain_warnings
+                    .iter()
+                    .map(|pw| json!({
+                        "signal_id": pw.signal_id.to_string(),
+                        "intensity": pw.intensity,
+                        "description": &pw.description,
+                    }))
+                    .collect::<Vec<_>>()
+            );
         }
         if !result.proactive_recalls.is_empty() {
-            response["proactive_recalls"] = json!(result
-                .proactive_recalls
-                .iter()
-                .map(|pr| json!({
-                    "memory_id": pr.memory_id.to_string(),
-                    "content": &pr.content,
-                    "relevance": pr.relevance,
-                    "action_type": &pr.action_type,
-                }))
-                .collect::<Vec<_>>());
+            response["proactive_recalls"] = json!(
+                result
+                    .proactive_recalls
+                    .iter()
+                    .map(|pr| json!({
+                        "memory_id": pr.memory_id.to_string(),
+                        "content": &pr.content,
+                        "relevance": pr.relevance,
+                        "action_type": &pr.action_type,
+                    }))
+                    .collect::<Vec<_>>()
+            );
         }
         if !result.detected_actions.is_empty() {
-            response["detected_actions"] = json!(result
-                .detected_actions
-                .iter()
-                .map(|da| json!({
-                    "action_type": &da.action_type,
-                    "detail": &da.detail,
-                }))
-                .collect::<Vec<_>>());
+            response["detected_actions"] = json!(
+                result
+                    .detected_actions
+                    .iter()
+                    .map(|da| json!({
+                        "action_type": &da.action_type,
+                        "detail": &da.detail,
+                    }))
+                    .collect::<Vec<_>>()
+            );
         }
 
         response.to_string()

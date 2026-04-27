@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/nambok/mentedb-mcp/compare/v0.5.4...v0.5.5) - 2026-04-27
+
+### Other
+
+- Fix run_enrichment call: add skip_extraction param for 0.9 API
+- Bump mentedb crates to 0.9 (WAL-level locking, multi-process safety)
+
 ## [0.5.4](https://github.com/nambok/mentedb-mcp/compare/v0.5.3...v0.5.4) - 2026-04-26
 
 ### Added

@@ -40,6 +40,7 @@ impl MenteDbServer {
             self.embedding_provider.as_ref(),
             self.cognitive_llm.as_deref(),
             current_turn,
+            false,
         )
         .await;
 

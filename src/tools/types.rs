@@ -13,6 +13,10 @@ pub struct StoreMemoryRequest {
     pub agent_id: Option<String>,
     #[schemars(description = "Optional tags for categorization")]
     pub tags: Option<Vec<String>>,
+    #[schemars(
+        description = "Memory scope: 'contextual' (default) = retrieved by semantic similarity. 'always' = returned on every process_turn call, regardless of conversation topic."
+    )]
+    pub scope: Option<String>,
     #[schemars(description = "Optional key-value metadata")]
     pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }

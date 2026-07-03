@@ -39,7 +39,9 @@ This writes three hooks into `~/.claude/settings.json`:
 | Hook | What it does |
 |------|-------------|
 | `UserPromptSubmit` | Recalls context for your prompt and injects it before the model responds |
+| `PostToolUse` | Captures significant actions (file edits, non-trivial commands) as they happen, so a long agentic session never loses work if it is interrupted |
 | `Stop` | Stores the completed turn (your prompt plus the assistant's answer) through the full cognitive pipeline |
+| `PreCompact` | Flushes memory to disk before Claude Code compacts a long session, so nothing captured so far is lost |
 | `SessionStart` | Injects your user profile and always-scoped memories at session start, resume, and right after context compaction |
 
 Why hooks beat MCP for memory:

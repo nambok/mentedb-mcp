@@ -96,6 +96,55 @@ impl Backend {
         }
     }
 
+    /// Store a lightweight action note captured live during a session.
+    pub async fn store_note(&self, content: &str, project: Option<String>) -> anyhow::Result<()> {
+        match self {
+            Backend::Cloud(client) => {
+                // Cloud has no low-level note endpoint; store_memory is the
+                // closest and is already persisted server-side.
+                let mut tags = vec!["action".to_string()];
+                if let Some(p) = &project {
+                    tags.push(format!("scope:project:{p}"));
+                }
+                client
+                    .call_tool(
+                        "store_memory",
+                        json!({
+                            "content": content,
+                            "memory_type": "episodic",
+                            "tags": tags,
+                        }),
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                Ok(())
+            }
+            #[cfg(feature = "local")]
+            Backend::Local(client) => {
+                client
+                    .post(
+                        "/v1/note",
+                        json!({ "content": content, "project": project }),
+                    )
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Flush in-memory engine state to disk before context loss. No-op for
+    /// cloud, where every write is already persisted server-side.
+    pub async fn flush(&self) -> anyhow::Result<()> {
+        match self {
+            Backend::Cloud(_) => Ok(()),
+            #[cfg(feature = "local")]
+            Backend::Local(client) => {
+                client.post("/v1/flush", json!({})).await?;
+                Ok(())
+            }
+        }
+    }
+
     /// Session-start context: {profile, always: [...]}.
     pub async fn session_context(&self) -> anyhow::Result<serde_json::Value> {
         match self {

@@ -277,6 +277,65 @@ fn hook_full_turn_loop_with_autospawn() {
 }
 
 #[test]
+fn post_tool_use_captures_action_live() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = spawn_daemon(dir.path());
+    let info = wait_for_daemon(dir.path(), Duration::from_secs(120));
+
+    // A PostToolUse hook for a file edit stores an action note immediately,
+    // with no prior user-prompt/stop turn.
+    let out = run_hook(
+        dir.path(),
+        "post-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-ptu",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/payments.rs" },
+            "cwd": "/tmp/myproj",
+            "hook_event_name": "PostToolUse",
+        }),
+    );
+    assert!(out.trim().is_empty(), "post-tool-use prints nothing: {out}");
+
+    // The action is immediately recallable (flushed on write).
+    let (code, body) = daemon_post(
+        &info,
+        "/v1/context",
+        &serde_json::json!({ "prompt": "what files were changed for payments" }),
+    );
+    assert_eq!(code, 200);
+    let ctx: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        ctx["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["content"].as_str().unwrap_or("").contains("payments.rs")),
+        "captured action must be recallable, got: {ctx}"
+    );
+
+    // A read-only command is not captured (noise filter).
+    run_hook(
+        dir.path(),
+        "post-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-ptu",
+            "tool_name": "Bash",
+            "tool_input": { "command": "git status" },
+            "hook_event_name": "PostToolUse",
+        }),
+    );
+
+    // PreCompact flush never errors.
+    let out = run_hook(
+        dir.path(),
+        "pre-compact",
+        &serde_json::json!({ "session_id": "sess-ptu", "trigger": "auto" }),
+    );
+    assert!(out.trim().is_empty());
+}
+
+#[test]
 fn hook_tolerates_garbage_input() {
     let dir = tempfile::tempdir().unwrap();
     // Malformed JSON, no daemon, no cloud: must still exit 0 with no output.

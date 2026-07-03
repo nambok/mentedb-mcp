@@ -144,6 +144,45 @@ async fn session_context(
     Ok(Json(state.server.hook_session_context()))
 }
 
+#[derive(Deserialize)]
+struct NoteRequest {
+    content: String,
+    #[serde(default)]
+    project: Option<String>,
+}
+
+async fn note(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Json(req): Json<NoteRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    state
+        .server
+        .hook_store_note(&req.content, req.project.as_deref());
+    // Durable immediately: an interrupted session must not lose captured work.
+    if let Err(e) = state.server.db_ref().flush() {
+        tracing::warn!(error = %e, "post-note flush failed");
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn flush(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if let Err(e) = state.server.db_ref().flush() {
+        tracing::warn!(error = %e, "flush failed");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn daemon_health_ok(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/health");
     match reqwest::Client::builder()
@@ -190,6 +229,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/context", post(context))
         .route("/v1/turn", post(turn))
+        .route("/v1/note", post(note))
+        .route("/v1/flush", post(flush))
         .route("/v1/session-context", post(session_context))
         .with_state(state);
 

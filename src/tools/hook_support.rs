@@ -70,4 +70,27 @@ impl MenteDbServer {
 
         json!({ "profile": profile, "always": always })
     }
+
+    /// Store a lightweight episodic "action" note, captured live during a
+    /// session (e.g. a file edit or command). Deliberately does NOT run the
+    /// full process_turn pipeline: tool actions fire many times per turn, so
+    /// this is a direct tagged store. Low salience lets decay and
+    /// consolidation fold these into higher-level memories over time.
+    pub(crate) fn hook_store_note(&self, content: &str, project: Option<&str>) {
+        let embedding = self.embedding_provider.embed(content).unwrap_or_default();
+        let mut node = MemoryNode::new(
+            AgentId(Uuid::nil()),
+            MemoryType::Episodic,
+            content.to_string(),
+            embedding,
+        );
+        node.tags.push("action".to_string());
+        node.salience = 0.4;
+        if let Some(p) = project {
+            node.tags.push(format!("scope:project:{p}"));
+        }
+        if let Err(e) = self.db.store(node) {
+            tracing::warn!(error = %e, "hook note store failed");
+        }
+    }
 }

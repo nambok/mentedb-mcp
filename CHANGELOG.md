@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.8](https://github.com/nambok/mentedb-mcp/compare/v0.5.7...v0.5.8) - 2026-07-03
+
+### Added
+
+- capture actions live via PostToolUse and flush on PreCompact hooks ([#85](https://github.com/nambok/mentedb-mcp/pull/85))
+
+### Other
+
+- correct local-default framing, cloud architecture, and concurrency claims ([#87](https://github.com/nambok/mentedb-mcp/pull/87))
+
 ## [0.5.7](https://github.com/nambok/mentedb-mcp/compare/v0.5.6...v0.5.7) - 2026-07-03
 
 ### Added

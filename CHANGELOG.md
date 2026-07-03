@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.7](https://github.com/nambok/mentedb-mcp/compare/v0.5.6...v0.5.7) - 2026-07-03
+
+### Added
+
+- lifecycle hook integration for Claude Code with local daemon and cloud backends ([#83](https://github.com/nambok/mentedb-mcp/pull/83))
+
 ## [0.5.6](https://github.com/nambok/mentedb-mcp/compare/v0.5.5...v0.5.6) - 2026-07-03
 
 ### Fixed

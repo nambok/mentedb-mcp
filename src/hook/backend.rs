@@ -53,8 +53,13 @@ impl Backend {
                     .unwrap_or_default();
                 let parsed: serde_json::Value =
                     serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
-                // Normalize search_memories {results: [...]} to the hook shape.
-                let memories = parsed.get("results").cloned().unwrap_or_else(|| json!([]));
+                // The cloud API returns {memories: [...]}, older builds used
+                // {results: [...]}, accept both.
+                let memories = parsed
+                    .get("memories")
+                    .or_else(|| parsed.get("results"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
                 Ok(json!({ "memories": memories, "pain": [] }))
             }
             #[cfg(feature = "local")]

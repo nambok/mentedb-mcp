@@ -101,7 +101,7 @@ You can also revoke sessions from the web dashboard at [app.mentedb.com](https:/
 
 ### Claude Desktop
 
-Add to `~/.config/claude/claude_desktop_config.json` (macOS/Linux) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `~/.config/claude/claude_desktop_config.json` (Linux), or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -168,8 +168,9 @@ By default, the server exposes 4 essential tools:
 | `context` | Top 10 semantically relevant memories + all always-scoped memories |
 | `stored` | Number of facts auto-extracted and stored from this turn |
 | `contradictions` | Number of contradictions detected |
-| `contradiction_details` | Array of `{ memory_id, explanation }` for each contradiction |
-| `pain_warnings` | Array of `{ id, warning }` from anti_pattern memories matching current context |
+| `pain_warnings` | Array of `{ signal_id, intensity, description }` from anti_pattern memories matching current context (omitted when empty) |
+| `proactive_recalls` | Memories surfaced by detected action keywords (omitted when empty) |
+| `detected_actions` | Action keywords recognized in the turn (omitted when empty) |
 
 ### Automatic Enrichment
 

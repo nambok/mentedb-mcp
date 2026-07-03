@@ -41,7 +41,10 @@ mentedb-consolidation = { version = "0.9", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]
-default = []
+# Local mode ships by default: the README documents `npx mentedb-mcp --local`
+# and `cargo install mentedb-mcp` + `--local`, so published binaries must
+# include it. Cloud-only builds can use --no-default-features.
+default = ["local"]
 local = [
     "mentedb",
     "mentedb-core",

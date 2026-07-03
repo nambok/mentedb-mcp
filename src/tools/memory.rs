@@ -38,9 +38,18 @@ impl MenteDbServer {
         let mut node = MemoryNode::new(AgentId(agent_id), memory_type, req.content, embedding);
 
         let mut tags = req.tags.unwrap_or_default();
-        // Auto-add scope tags based on content analysis
+        // Scope tag: 'always' memories are surfaced on every process_turn.
         if !tags.iter().any(|t| t.starts_with("scope:")) {
-            tags.push("scope:global".to_string());
+            let scope = match req.scope.as_deref() {
+                None | Some("contextual") => "contextual",
+                Some("always") => "always",
+                Some(other) => {
+                    return error_result(&format!(
+                        "Invalid scope '{other}' (expected 'contextual' or 'always')"
+                    ));
+                }
+            };
+            tags.push(format!("scope:{scope}"));
         }
         node.tags = tags;
 

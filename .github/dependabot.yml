@@ -1,0 +1,19 @@
+# Keeps the MCP server on the latest mentedb engine release.
+# Dependabot PRs the bump (manifest + lockfile), CI gates it, and merging
+# lets release-plz fold it into the next mentedb-mcp release, which rebuilds
+# and republishes the npm/crates binaries against the new engine.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+    allow:
+      - dependency-type: all
+    groups:
+      mentedb-engine:
+        patterns:
+          - "mentedb*"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5

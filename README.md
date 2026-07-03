@@ -8,7 +8,7 @@ The MCP (Model Context Protocol) server for MenteDB, the mind database for AI ag
 
 ## What is this?
 
-This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. It connects to MenteDB Cloud by default — no local database, no file locks, works across multiple sessions simultaneously.
+This MCP server lets any AI agent (Claude, GPT, Copilot, or any MCP compatible client) use MenteDB as persistent memory. Fresh installs run a local embedded database by default; once you log in it switches to MenteDB Cloud, which removes local file locks and syncs across sessions and devices.
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ If you prefer to run entirely offline without cloud:
 mentedb-mcp --local
 ```
 
-In local mode, the server uses an embedded database at `~/.mentedb/`. Only one instance can run at a time due to file locking.
+In local mode, the server uses an embedded database at `~/.mentedb/`. Multiple processes can share it safely: writes are serialized with a cross-process file lock (flock) and reads are lock-free.
 
 ### Alternative: install from source
 
@@ -101,7 +101,7 @@ The `update` command shows you the exact instructions that will be written and a
 | `login` | Authenticate with MenteDB Cloud via browser |
 | `logout` | Remove cloud credentials |
 | `status` | Check cloud connection and token validity |
-| `hook <event>` | Process a lifecycle hook: user-prompt, stop, or session-start (reads JSON from stdin) |
+| `hook <event>` | Process a lifecycle hook: user-prompt, stop, session-start, post-tool-use, or pre-compact (reads JSON from stdin) |
 | `daemon` | Run the local hook daemon (started automatically by hooks when needed) |
 
 ## Authentication
@@ -273,7 +273,7 @@ In local mode (`--local`), you can expose all 32 tools with `--full-tools` for a
 mentedb-mcp [OPTIONS]
 
 Options:
-  --local                     Force local mode (embedded database, single instance)
+  --local                     Force local mode (embedded database; safe for concurrent processes via file locking)
   --data-dir <PATH>           Data directory path [default: ~/.mentedb]
   --embedding-dim <DIM>       Embedding vector dimension [default: 128]
   --llm-provider <PROVIDER>   LLM provider for local extraction: openai, anthropic, ollama, mock [default: mock]
@@ -299,7 +299,7 @@ The server writes logs to both stderr and a rolling file at `~/.mentedb/mentedb-
 
 ## Architecture
 
-**Cloud mode (default):** The server runs as a lightweight HTTP proxy on stdio transport. All memory operations are forwarded to MenteDB Cloud which handles embedding generation (via AWS Bedrock Titan), semantic search, LLM extraction (via Claude), and DynamoDB storage. No local state is kept.
+**Cloud mode (after login):** The server runs as a lightweight HTTP proxy on stdio transport. Memory operations are forwarded to MenteDB Cloud, which runs the MenteDB engine on ECS Fargate with per-user data directories on EFS, embeddings via AWS Bedrock Titan, and server-side LLM extraction. No local state is kept.
 
 **Local mode (`--local`):** The server uses the full MenteDB engine with an embedded fjall database, local Candle embeddings (all-MiniLM-L6-v2), and optional LLM extraction. This mode supports all 32 tools including knowledge graph, consolidation, and cognitive systems.
 

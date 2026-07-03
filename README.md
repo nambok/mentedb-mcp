@@ -26,6 +26,31 @@ npx mentedb-mcp@latest login
 
 That's it. Your agent now has persistent memory that works across all your sessions and devices. Replace `copilot` with `cursor` or `claude` for other editors.
 
+### Claude Code: hooks instead of MCP (recommended)
+
+For Claude Code (the CLI), MenteDB integrates through lifecycle hooks rather than MCP tools:
+
+```bash
+npx mentedb-mcp@latest setup claude-code
+```
+
+This writes three hooks into `~/.claude/settings.json`:
+
+| Hook | What it does |
+|------|-------------|
+| `UserPromptSubmit` | Recalls context for your prompt and injects it before the model responds |
+| `Stop` | Stores the completed turn (your prompt plus the assistant's answer) through the full cognitive pipeline |
+| `SessionStart` | Injects your user profile and always-scoped memories at session start, resume, and right after context compaction |
+
+Why hooks beat MCP for memory:
+
+- Zero token overhead: no tool schemas enter the model context (MCP tool definitions cost thousands of tokens per session)
+- Deterministic: memory runs on every turn; the model never forgets to call it
+- Post-compaction recovery: the SessionStart hook re-injects standing context after Claude Code compacts, which MCP tools cannot do
+- Hooks never block: any failure is logged to `~/.mentedb/` and the turn proceeds normally
+
+The hook backend follows your login state: cloud when authenticated (each hook is a single HTTP call), otherwise a local daemon that owns the embedded database and starts automatically on first use (`mentedb-mcp daemon`). The daemon keeps the embedding model loaded and flushes to disk after every stored turn.
+
 ### How it works
 
 Once logged in, the MCP server runs as a thin HTTP client — all memory operations (store, search, recall) are handled by MenteDB Cloud. This means:
@@ -69,11 +94,13 @@ The `update` command shows you the exact instructions that will be written and a
 
 | Command | Description |
 |---------|-------------|
-| `setup <client>` | Auto-configure MCP for copilot, cursor, or claude |
+| `setup <client>` | Auto-configure copilot, cursor, claude (Desktop MCP), or claude-code (hooks) |
 | `update <client>` | Update agent instructions (preserves customizations) |
 | `login` | Authenticate with MenteDB Cloud via browser |
 | `logout` | Remove cloud credentials |
 | `status` | Check cloud connection and token validity |
+| `hook <event>` | Process a lifecycle hook: user-prompt, stop, or session-start (reads JSON from stdin) |
+| `daemon` | Run the local hook daemon (started automatically by hooks when needed) |
 
 ## Authentication
 

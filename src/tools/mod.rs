@@ -4,6 +4,7 @@ mod context;
 mod enrichment;
 mod graph;
 mod handler;
+mod hook_support;
 mod inference;
 mod ingest;
 mod memory;

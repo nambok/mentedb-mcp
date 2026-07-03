@@ -2,6 +2,9 @@ mod cloud_client;
 mod cloud_server;
 mod config;
 #[cfg(feature = "local")]
+mod daemon;
+mod hook;
+#[cfg(feature = "local")]
 mod resources;
 #[cfg(feature = "local")]
 mod server;
@@ -32,7 +35,7 @@ struct Cli {
     command: Option<Commands>,
 
     /// Path to the data directory
-    #[arg(long, default_value = "~/.mentedb")]
+    #[arg(long, default_value = "~/.mentedb", global = true)]
     data_dir: String,
 
     /// Embedding dimension (local mode only)
@@ -85,6 +88,15 @@ enum Commands {
     Logout,
     /// Check cloud connection status
     Status,
+    /// Process a client lifecycle hook (reads JSON payload from stdin)
+    Hook {
+        /// Hook event to process
+        #[arg(value_enum)]
+        event: hook::HookEvent,
+    },
+    /// Run the local hook daemon (owns the embedded database)
+    #[cfg(feature = "local")]
+    Daemon,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -92,6 +104,8 @@ enum SetupClient {
     Copilot,
     Claude,
     Cursor,
+    /// Claude Code (the CLI): lifecycle hooks, no MCP tool schemas
+    ClaudeCode,
 }
 
 #[tokio::main]
@@ -104,6 +118,40 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Login) => return run_login().await,
         Some(Commands::Logout) => return run_logout(),
         Some(Commands::Status) => return run_status().await,
+        Some(Commands::Hook { event }) => {
+            // Hooks print only their payload on stdout; logging goes to the
+            // data directory so a noisy logger can never corrupt the output
+            // the client parses.
+            let data_dir = resolve_data_dir(&cli.data_dir);
+            std::fs::create_dir_all(&data_dir).ok();
+            let file_appender = tracing_appender::rolling::daily(&data_dir, "mentedb-hook.log");
+            let (file_writer, _guard) = non_blocking(file_appender);
+            tracing_subscriber::registry()
+                .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+                .with(fmt::layer().with_writer(file_writer).with_ansi(false))
+                .init();
+            return hook::run(event, data_dir, cli.local).await;
+        }
+        #[cfg(feature = "local")]
+        Some(Commands::Daemon) => {
+            let data_dir = resolve_data_dir(&cli.data_dir);
+            std::fs::create_dir_all(&data_dir).ok();
+            let file_appender = tracing_appender::rolling::daily(&data_dir, "mentedb-daemon.log");
+            let (file_writer, _guard) = non_blocking(file_appender);
+            tracing_subscriber::registry()
+                .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+                .with(fmt::layer().with_writer(file_writer).with_ansi(false))
+                .init();
+            let config = ServerConfig::new(
+                data_dir,
+                cli.embedding_dim,
+                cli.llm_provider,
+                cli.llm_api_key,
+                cli.llm_model,
+                cli.full_tools,
+            );
+            return daemon::run(config).await;
+        }
         None => {}
     }
 
@@ -608,7 +656,107 @@ fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
         SetupClient::Copilot => setup_copilot(&home, &binary, force),
         SetupClient::Claude => setup_claude(&home, &binary, force),
         SetupClient::Cursor => setup_cursor(&home, &binary, force),
+        SetupClient::ClaudeCode => setup_claude_code(&home, &binary, force),
     }
+}
+
+/// Configure Claude Code (the CLI) with lifecycle hooks instead of MCP.
+///
+/// Hooks cost zero tool-schema tokens and run deterministically every turn:
+/// UserPromptSubmit injects recalled context, Stop stores the completed turn,
+/// SessionStart injects the user profile (including right after compaction).
+fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
+    println!("\nSetting up MenteDB hooks for Claude Code...\n");
+
+    let settings_path = std::path::PathBuf::from(home).join(".claude/settings.json");
+    let hook_command = if binary == "npx" {
+        "npx -y mentedb-mcp@latest hook".to_string()
+    } else {
+        format!("{binary} hook")
+    };
+
+    let raw = std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
+    let mut settings: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    if !settings.is_object() {
+        settings = serde_json::json!({});
+    }
+
+    let hooks = settings
+        .as_object_mut()
+        .expect("settings is an object")
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+    if !hooks.is_object() {
+        *hooks = serde_json::json!({});
+    }
+
+    let events: [(&str, &str, &str); 3] = [
+        ("UserPromptSubmit", "user-prompt", ""),
+        ("Stop", "stop", ""),
+        ("SessionStart", "session-start", "startup|resume|compact"),
+    ];
+
+    for (event, subcommand, matcher) in events {
+        let command = format!("{hook_command} {subcommand}");
+        let entries = hooks
+            .as_object_mut()
+            .expect("hooks is an object")
+            .entry(event)
+            .or_insert_with(|| serde_json::json!([]));
+        if !entries.is_array() {
+            *entries = serde_json::json!([]);
+        }
+        let arr = entries.as_array_mut().expect("entries is an array");
+
+        let already = arr.iter().any(|group| {
+            group["hooks"].as_array().is_some_and(|hs| {
+                hs.iter().any(|h| {
+                    h["command"]
+                        .as_str()
+                        .is_some_and(|c| c.contains("mentedb-mcp") && c.contains(subcommand))
+                })
+            })
+        });
+        if already && !force {
+            eprintln!("  [skip] {event} hook already configured");
+            continue;
+        }
+        if already && force {
+            arr.retain(|group| {
+                !group["hooks"].as_array().is_some_and(|hs| {
+                    hs.iter().any(|h| {
+                        h["command"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("mentedb-mcp"))
+                    })
+                })
+            });
+        }
+
+        let mut group = serde_json::json!({
+            "hooks": [ { "type": "command", "command": command } ]
+        });
+        if !matcher.is_empty() {
+            group["matcher"] = serde_json::json!(matcher);
+        }
+        arr.push(group);
+        eprintln!("  [added] {event} hook");
+    }
+
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    eprintln!("  [updated] {}", settings_path.display());
+
+    println!("\nDone. MenteDB now runs on every Claude Code turn via hooks:");
+    println!("  UserPromptSubmit  recalls context for the prompt");
+    println!("  Stop              stores the completed turn");
+    println!("  SessionStart      injects your profile and standing rules");
+    println!("\nBackend: cloud when logged in (mentedb-mcp login), otherwise a");
+    println!("local daemon that starts automatically on first use.");
+    Ok(())
 }
 
 fn which_mentedb_mcp() -> String {

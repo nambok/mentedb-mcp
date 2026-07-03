@@ -31,6 +31,10 @@ pub enum HookEvent {
     Stop,
     /// SessionStart: inject profile and always-scoped memories
     SessionStart,
+    /// PostToolUse: capture a significant tool action live
+    PostToolUse,
+    /// PreCompact: flush memory before context is compacted away
+    PreCompact,
 }
 
 /// Per-session state persisted across hook invocations.
@@ -163,8 +167,91 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 println!("{text}");
             }
         }
+        HookEvent::PostToolUse => {
+            // Capture significant actions as they happen so an interrupted
+            // long session never loses its work, and mid-session decisions
+            // become memory immediately rather than only at Stop.
+            let Some(note) = summarize_tool_action(&payload) else {
+                return Ok(());
+            };
+            let project = payload
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .and_then(|c| Path::new(c).file_name())
+                .and_then(|n| n.to_str())
+                .map(str::to_string);
+            let backend = Backend::resolve(data_dir, force_local).await?;
+            backend.store_note(&note, project).await?;
+        }
+        HookEvent::PreCompact => {
+            // The long session is about to lose context; make sure everything
+            // captured so far is durable.
+            let backend = Backend::resolve(data_dir, force_local).await?;
+            backend.flush().await?;
+        }
     }
     Ok(())
+}
+
+/// Bash command prefixes that only read state and are not worth remembering.
+const READ_ONLY_BASH: &[&str] = &[
+    "ls",
+    "cat",
+    "grep",
+    "rg",
+    "find",
+    "pwd",
+    "echo",
+    "which",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "git status",
+    "git diff",
+    "git log",
+    "git show",
+    "git branch",
+    "cd",
+    "wc",
+    "tree",
+    "stat",
+    "env",
+    "printenv",
+    "date",
+    "whoami",
+    "ps",
+    "top",
+    "df",
+    "du",
+];
+
+/// Build a compact memory note for a significant tool action, or None for
+/// tools not worth remembering (reads, searches, navigation).
+fn summarize_tool_action(payload: &serde_json::Value) -> Option<String> {
+    let tool = payload.get("tool_name").and_then(|v| v.as_str())?;
+    let input = payload.get("tool_input");
+    let field = |k: &str| input.and_then(|i| i.get(k)).and_then(|v| v.as_str());
+
+    match tool {
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "Update" => {
+            let path = field("file_path").or_else(|| field("notebook_path"))?;
+            Some(format!("Edited file: {path}"))
+        }
+        "Bash" => {
+            let cmd = field("command")?.trim();
+            if cmd.is_empty() {
+                return None;
+            }
+            let lower = cmd.to_lowercase();
+            if READ_ONLY_BASH.iter().any(|p| lower.starts_with(p)) {
+                return None;
+            }
+            let compact: String = cmd.chars().take(200).collect();
+            Some(format!("Ran command: {compact}"))
+        }
+        _ => None,
+    }
 }
 
 const CONTEXT_CHAR_BUDGET: usize = 4_000;
@@ -303,6 +390,51 @@ mod tests {
         let path = state_path(dir.path(), "../../etc/passwd");
         assert!(path.starts_with(dir.path().join("hook_sessions")));
         assert!(!path.to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn summarize_tool_action_captures_edits_and_commands() {
+        let edit = json!({
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/main.rs" },
+        });
+        assert_eq!(
+            summarize_tool_action(&edit).as_deref(),
+            Some("Edited file: src/main.rs")
+        );
+
+        let bash = json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test --workspace" },
+        });
+        assert_eq!(
+            summarize_tool_action(&bash).as_deref(),
+            Some("Ran command: cargo test --workspace")
+        );
+    }
+
+    #[test]
+    fn summarize_tool_action_skips_reads_and_unknown() {
+        // Read-only bash is noise.
+        for cmd in [
+            "ls -la",
+            "git status",
+            "cat foo",
+            "grep x .",
+            "pwd",
+            "cd /tmp",
+        ] {
+            let p = json!({ "tool_name": "Bash", "tool_input": { "command": cmd } });
+            assert!(summarize_tool_action(&p).is_none(), "should skip: {cmd}");
+        }
+        // Read/search tools are not captured.
+        for tool in ["Read", "Grep", "Glob", "WebFetch"] {
+            let p = json!({ "tool_name": tool, "tool_input": {} });
+            assert!(summarize_tool_action(&p).is_none(), "should skip: {tool}");
+        }
+        // Missing fields do not panic.
+        assert!(summarize_tool_action(&json!({})).is_none());
+        assert!(summarize_tool_action(&json!({ "tool_name": "Bash" })).is_none());
     }
 
     #[test]

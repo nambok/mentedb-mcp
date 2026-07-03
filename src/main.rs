@@ -691,10 +691,16 @@ fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()
         *hooks = serde_json::json!({});
     }
 
-    let events: [(&str, &str, &str); 3] = [
+    let events: [(&str, &str, &str); 5] = [
         ("UserPromptSubmit", "user-prompt", ""),
         ("Stop", "stop", ""),
         ("SessionStart", "session-start", "startup|resume|compact"),
+        (
+            "PostToolUse",
+            "post-tool-use",
+            "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        ),
+        ("PreCompact", "pre-compact", ""),
     ];
 
     for (event, subcommand, matcher) in events {
@@ -752,7 +758,9 @@ fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()
 
     println!("\nDone. MenteDB now runs on every Claude Code turn via hooks:");
     println!("  UserPromptSubmit  recalls context for the prompt");
+    println!("  PostToolUse       captures significant actions as they happen");
     println!("  Stop              stores the completed turn");
+    println!("  PreCompact        flushes memory before context is compacted");
     println!("  SessionStart      injects your profile and standing rules");
     println!("\nBackend: cloud when logged in (mentedb-mcp login), otherwise a");
     println!("local daemon that starts automatically on first use.");

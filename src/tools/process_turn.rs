@@ -91,7 +91,7 @@ impl MenteDbServer {
     #[rmcp::tool(
         description = "Process a conversation turn. Stores new memories and returns relevant context from past conversations. MUST be called every turn."
     )]
-    async fn process_turn(
+    pub(crate) async fn process_turn(
         &self,
         Parameters(req): Parameters<ProcessTurnRequest>,
     ) -> Result<CallToolResult, McpError> {

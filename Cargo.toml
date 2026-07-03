@@ -57,6 +57,9 @@ local = [
 ]
 vendored-openssl = ["openssl"]
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 strip = true
 lto = true

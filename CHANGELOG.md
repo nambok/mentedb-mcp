@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.12](https://github.com/nambok/mentedb-mcp/compare/v0.5.11...v0.5.12) - 2026-07-04
+
+### Fixed
+
+- install hooks into every Claude config dir and surface expired cloud sessions ([#94](https://github.com/nambok/mentedb-mcp/pull/94))
+
 ## [0.5.11](https://github.com/nambok/mentedb-mcp/compare/v0.5.10...v0.5.11) - 2026-07-04
 
 ### Added

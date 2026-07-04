@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.14](https://github.com/nambok/mentedb-mcp/compare/v0.5.13...v0.5.14) - 2026-07-04
+
+### Fixed
+
+- pinned memories bypass injection filters and the ledger resets at compaction ([#98](https://github.com/nambok/mentedb-mcp/pull/98))
+
 ## [0.5.13](https://github.com/nambok/mentedb-mcp/compare/v0.5.12...v0.5.13) - 2026-07-04
 
 ### Added

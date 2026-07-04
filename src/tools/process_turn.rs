@@ -112,6 +112,7 @@ impl MenteDbServer {
             turn_id: req.turn_id,
             project_context: req.project_context.clone(),
             agent_id: Some(agent_id),
+            session_id: req.session_id.clone(),
         };
 
         // Core pipeline: single call handles embedding, context retrieval,

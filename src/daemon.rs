@@ -183,6 +183,44 @@ async fn flush(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Dump every memory for `mentedb-mcp sync` (local to cloud migration).
+async fn export(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let db = state.server.db_ref();
+    let memories: Vec<serde_json::Value> = db
+        .memory_ids()
+        .into_iter()
+        .filter_map(|id| db.get_memory(id).ok())
+        .map(|n| {
+            json!({
+                "id": n.id.to_string(),
+                "content": n.content,
+                "memory_type": memory_type_str(&n.memory_type),
+                "tags": n.tags,
+                "created_at": n.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "memories": memories })))
+}
+
+fn memory_type_str(mt: &mentedb::prelude::MemoryType) -> &'static str {
+    use mentedb::prelude::MemoryType;
+    match mt {
+        MemoryType::Episodic => "episodic",
+        MemoryType::Semantic => "semantic",
+        MemoryType::Procedural => "procedural",
+        MemoryType::Correction => "correction",
+        MemoryType::AntiPattern => "anti_pattern",
+        MemoryType::Reasoning => "reasoning",
+    }
+}
+
 async fn daemon_health_ok(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/health");
     match reqwest::Client::builder()
@@ -232,6 +270,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .route("/v1/note", post(note))
         .route("/v1/flush", post(flush))
         .route("/v1/session-context", post(session_context))
+        .route("/v1/export", post(export))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -242,13 +281,25 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         pid: std::process::id(),
         token,
     };
+    // The registration file carries the auth token: it must never exist
+    // world-readable, so create it 0600 from the first byte.
     let info_file = info_path(&data_dir);
-    std::fs::write(&info_file, serde_json::to_string(&info)?)?;
     #[cfg(unix)]
     {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&info_file)?;
+        f.write_all(serde_json::to_string(&info)?.as_bytes())?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&info_file, std::fs::Permissions::from_mode(0o600)).ok();
     }
+    #[cfg(not(unix))]
+    std::fs::write(&info_file, serde_json::to_string(&info)?)?;
 
     tracing::info!(port, data_dir = %data_dir.display(), "hook daemon listening");
 

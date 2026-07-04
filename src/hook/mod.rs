@@ -13,7 +13,9 @@
 //! Hooks never fail the client: every error is logged to the data directory
 //! log file and the process exits 0. Output is written only on success.
 
-mod backend;
+pub(crate) mod backend;
+mod redact;
+pub(crate) mod spool;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use backend::Backend;
+use redact::redact;
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum HookEvent {
@@ -46,6 +49,10 @@ pub enum HookEvent {
 struct SessionState {
     turn_id: u64,
     pending_prompt: Option<String>,
+    /// Previous turn's user message, blended into the recall query so short
+    /// follow-up prompts still retrieve on-topic memories.
+    #[serde(default)]
+    last_user_message: Option<String>,
 }
 
 fn state_path(data_dir: &Path, session_id: &str) -> PathBuf {
@@ -109,14 +116,25 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             if prompt.is_empty() {
                 return Ok(());
             }
+            let prompt = redact(&prompt);
 
             // Stash the prompt so the Stop hook can store the complete turn.
             let mut state = load_state(data_dir, &session_id);
             state.pending_prompt = Some(prompt.chars().take(8_000).collect());
             save_state(data_dir, &session_id, &state);
 
+            // Short follow-ups ("do it", "and tests?") retrieve nothing on
+            // their own; blend in the previous turn for topical grounding.
+            let query = match state.last_user_message.as_deref() {
+                Some(last) if prompt.chars().count() < 200 => {
+                    let last: String = last.chars().take(600).collect();
+                    format!("{prompt}\n\n[previous turn] {last}")
+                }
+                _ => prompt.clone(),
+            };
+
             let backend = Backend::resolve(data_dir, force_local).await?;
-            let ctx = backend.context(&prompt).await?;
+            let ctx = backend.context(&query).await?;
             if let Some(text) = format_context(&ctx) {
                 println!(
                     "{}",
@@ -130,13 +148,14 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             }
         }
         HookEvent::Stop => {
-            let assistant = payload
+            let assistant: String = payload
                 .get("last_assistant_message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .chars()
                 .take(16_000)
-                .collect::<String>();
+                .collect();
+            let assistant = redact(&assistant);
 
             let mut state = load_state(data_dir, &session_id);
             let Some(user_message) = state.pending_prompt.take() else {
@@ -146,6 +165,7 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             // skips periodic maintenance for it.
             state.turn_id += 1;
             let turn_id = state.turn_id;
+            state.last_user_message = Some(user_message.chars().take(600).collect());
             save_state(data_dir, &session_id, &state);
 
             let project = payload
@@ -155,10 +175,27 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
 
-            let backend = Backend::resolve(data_dir, force_local).await?;
-            backend
-                .store_turn(&user_message, &assistant, turn_id, project)
-                .await?;
+            let store = async {
+                let backend = Backend::resolve(data_dir, force_local).await?;
+                flush_spool(data_dir, &backend).await;
+                backend
+                    .store_turn(&user_message, &assistant, turn_id, project.clone())
+                    .await
+            }
+            .await;
+            if let Err(e) = store {
+                tracing::warn!(error = %e, "store_turn failed, spooling for retry");
+                spool::push(
+                    data_dir,
+                    &json!({
+                        "kind": "turn",
+                        "user_message": user_message,
+                        "assistant_response": assistant,
+                        "turn_id": turn_id,
+                        "project": project,
+                    }),
+                );
+            }
         }
         HookEvent::SessionStart => {
             let backend = Backend::resolve(data_dir, force_local).await?;
@@ -174,14 +211,26 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             let Some(note) = summarize_tool_action(&payload) else {
                 return Ok(());
             };
+            let note = redact(&note);
             let project = payload
                 .get("cwd")
                 .and_then(|v| v.as_str())
                 .and_then(|c| Path::new(c).file_name())
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
-            let backend = Backend::resolve(data_dir, force_local).await?;
-            backend.store_note(&note, project).await?;
+            let store = async {
+                let backend = Backend::resolve(data_dir, force_local).await?;
+                flush_spool(data_dir, &backend).await;
+                backend.store_note(&note, project.clone()).await
+            }
+            .await;
+            if let Err(e) = store {
+                tracing::warn!(error = %e, "store_note failed, spooling for retry");
+                spool::push(
+                    data_dir,
+                    &json!({ "kind": "note", "content": note, "project": project }),
+                );
+            }
         }
         HookEvent::PreCompact => {
             // The long session is about to lose context; make sure everything
@@ -191,6 +240,69 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
         }
     }
     Ok(())
+}
+
+/// Retry every spooled entry against the now-reachable backend. Entries that
+/// still fail (and everything after the first failure, to preserve order) go
+/// back into the spool.
+async fn flush_spool(data_dir: &Path, backend: &Backend) {
+    let entries = spool::take_all(data_dir);
+    if entries.is_empty() {
+        return;
+    }
+    let mut failed: Vec<serde_json::Value> = Vec::new();
+    let mut hit_failure = false;
+    for e in entries {
+        if hit_failure {
+            failed.push(e);
+            continue;
+        }
+        let ok = match e.get("kind").and_then(|v| v.as_str()) {
+            Some("turn") => {
+                let user = e.get("user_message").and_then(|v| v.as_str()).unwrap_or("");
+                if user.is_empty() {
+                    true // malformed, drop
+                } else {
+                    backend
+                        .store_turn(
+                            user,
+                            e.get("assistant_response")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(""),
+                            e.get("turn_id").and_then(|v| v.as_u64()).unwrap_or(1),
+                            e.get("project").and_then(|v| v.as_str()).map(str::to_string),
+                        )
+                        .await
+                        .is_ok()
+                }
+            }
+            Some("note") => {
+                let content = e.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                if content.is_empty() {
+                    true
+                } else {
+                    backend
+                        .store_note(
+                            content,
+                            e.get("project").and_then(|v| v.as_str()).map(str::to_string),
+                        )
+                        .await
+                        .is_ok()
+                }
+            }
+            _ => true,
+        };
+        if !ok {
+            hit_failure = true;
+            failed.push(e);
+        }
+    }
+    if failed.is_empty() {
+        tracing::info!("offline spool fully flushed");
+    } else {
+        tracing::warn!(retained = failed.len(), "spool flush incomplete");
+        spool::restore(data_dir, &failed);
+    }
 }
 
 /// Bash command prefixes that only read state and are not worth remembering.

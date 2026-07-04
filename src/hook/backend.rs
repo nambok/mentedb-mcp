@@ -154,8 +154,22 @@ impl Backend {
     pub async fn session_context(&self) -> anyhow::Result<serde_json::Value> {
         match self {
             Backend::Cloud(client) => {
-                // The cloud API has no profile endpoint; surface the most
-                // relevant standing memories via search instead.
+                // Prefer the dedicated tool: it returns scope:always memories
+                // deterministically instead of hoping a search matches them.
+                if let Ok(resp) = client.call_tool("get_session_context", json!({})).await {
+                    let text = resp
+                        .content
+                        .first()
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default();
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text)
+                        && (parsed.get("always").is_some() || parsed.get("profile").is_some())
+                    {
+                        return Ok(parsed);
+                    }
+                }
+
+                // Fallback for older gateways without the tool.
                 let resp = client
                     .call_tool(
                         "search_memories",
@@ -171,7 +185,8 @@ impl Backend {
                 let parsed: serde_json::Value =
                     serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
                 let always: Vec<serde_json::Value> = parsed
-                    .get("results")
+                    .get("memories")
+                    .or_else(|| parsed.get("results"))
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()

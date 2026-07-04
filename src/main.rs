@@ -73,13 +73,13 @@ enum Commands {
     /// Auto-configure MenteDB for your MCP client (Copilot CLI, Claude, Cursor, etc.)
     Setup {
         /// Target client
-        #[arg(value_enum, default_value = "copilot")]
+        #[arg(value_enum, default_value = "claude-code")]
         client: SetupClient,
     },
     /// Update MCP config and agent instructions (overwrites existing entries)
     Update {
         /// Target client
-        #[arg(value_enum, default_value = "copilot")]
+        #[arg(value_enum, default_value = "claude-code")]
         client: SetupClient,
     },
     /// Authenticate with MenteDB Cloud

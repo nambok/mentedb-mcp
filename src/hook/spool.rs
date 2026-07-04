@@ -24,10 +24,7 @@ pub fn push(data_dir: &Path, entry: &serde_json::Value) {
     let path = spool_path(data_dir);
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let line = entry.to_string();
-    let mut lines: Vec<&str> = existing
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let mut lines: Vec<&str> = existing.lines().filter(|l| !l.trim().is_empty()).collect();
     lines.push(&line);
     let start = lines.len().saturating_sub(MAX_ENTRIES);
     let mut body = lines[start..].join("\n");

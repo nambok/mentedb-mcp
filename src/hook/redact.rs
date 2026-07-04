@@ -22,7 +22,10 @@ static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
             r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b",
             "[redacted:github-token]",
         ),
-        (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[redacted:slack-token]"),
+        (
+            r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b",
+            "[redacted:slack-token]",
+        ),
         (r"\bmdb_[A-Za-z0-9]{16,}\b", "[redacted:mentedb-key]"),
         (
             r"\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",

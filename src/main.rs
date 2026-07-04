@@ -28,6 +28,41 @@ fn home_dir() -> Option<String> {
         .ok()
 }
 
+/// Every Claude Code settings directory on this machine. Users running
+/// separate configs (work vs personal) set CLAUDE_CONFIG_DIR or keep
+/// multiple ~/.claude-* directories; writing hooks to only ~/.claude then
+/// configures an instance they never run. Order: CLAUDE_CONFIG_DIR first,
+/// then ~/.claude, then any ~/.claude-* directory that already has a
+/// settings.json.
+fn claude_config_dirs(home: &str) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(v) = std::env::var("CLAUDE_CONFIG_DIR")
+        && !v.trim().is_empty()
+    {
+        dirs.push(std::path::PathBuf::from(v));
+    }
+
+    let default = std::path::PathBuf::from(home).join(".claude");
+    if !dirs.contains(&default) {
+        dirs.push(default);
+    }
+
+    if let Ok(entries) = std::fs::read_dir(home) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".claude-")
+                && entry.path().is_dir()
+                && entry.path().join("settings.json").exists()
+                && !dirs.contains(&entry.path())
+            {
+                dirs.push(entry.path());
+            }
+        }
+    }
+    dirs
+}
+
 #[derive(Parser)]
 #[command(name = "mentedb-mcp", about = "MCP server for MenteDB")]
 struct Cli {
@@ -751,54 +786,57 @@ async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
         }
     }
 
-    // 2. Claude Code hooks registered.
+    // 2. Claude Code hooks registered, in every config directory.
     let home = home_dir().unwrap_or_else(|| "~".to_string());
-    let settings_path = std::path::PathBuf::from(&home).join(".claude/settings.json");
-    match std::fs::read_to_string(&settings_path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-    {
-        Some(settings) => {
-            let expected = [
-                "UserPromptSubmit",
-                "Stop",
-                "SessionStart",
-                "PostToolUse",
-                "PreCompact",
-            ];
-            let mut missing = Vec::new();
-            for event in expected {
-                let present = settings["hooks"][event].as_array().is_some_and(|groups| {
-                    groups.iter().any(|g| {
-                        g["hooks"].as_array().is_some_and(|hs| {
-                            hs.iter().any(|h| {
-                                h["command"]
-                                    .as_str()
-                                    .is_some_and(|c| c.contains("mentedb-mcp"))
+    let expected = [
+        "UserPromptSubmit",
+        "Stop",
+        "SessionStart",
+        "PostToolUse",
+        "PreCompact",
+    ];
+    for dir in claude_config_dirs(&home) {
+        let settings_path = dir.join("settings.json");
+        match std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        {
+            Some(settings) => {
+                let mut missing = Vec::new();
+                for event in expected {
+                    let present = settings["hooks"][event].as_array().is_some_and(|groups| {
+                        groups.iter().any(|g| {
+                            g["hooks"].as_array().is_some_and(|hs| {
+                                hs.iter().any(|h| {
+                                    h["command"]
+                                        .as_str()
+                                        .is_some_and(|c| c.contains("mentedb-mcp"))
+                                })
                             })
                         })
-                    })
-                });
-                if !present {
-                    missing.push(event);
+                    });
+                    if !present {
+                        missing.push(event);
+                    }
+                }
+                if missing.is_empty() {
+                    println!("  [ok]   Hooks in {}: all 5 registered", dir.display());
+                } else {
+                    problems += 1;
+                    println!(
+                        "  [FAIL] Hooks in {} missing: {}. Run `npx mentedb-mcp@latest setup claude-code`.",
+                        dir.display(),
+                        missing.join(", ")
+                    );
                 }
             }
-            if missing.is_empty() {
-                println!("  [ok]   Claude Code hooks: all 5 registered");
-            } else {
+            None => {
                 problems += 1;
                 println!(
-                    "  [FAIL] Claude Code hooks missing: {}. Run `npx mentedb-mcp@latest setup claude-code`.",
-                    missing.join(", ")
+                    "  [warn] No Claude Code settings at {}. Run `npx mentedb-mcp@latest setup claude-code`.",
+                    settings_path.display()
                 );
             }
-        }
-        None => {
-            problems += 1;
-            println!(
-                "  [warn] No Claude Code settings at {}. Run `npx mentedb-mcp@latest setup claude-code`.",
-                settings_path.display()
-            );
         }
     }
 
@@ -1024,14 +1062,37 @@ fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {
 fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nSetting up MenteDB hooks for Claude Code...\n");
 
-    let settings_path = std::path::PathBuf::from(home).join(".claude/settings.json");
     let hook_command = if binary == "npx" {
         "npx -y mentedb-mcp@latest hook".to_string()
     } else {
         format!("{binary} hook")
     };
 
-    let raw = std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
+    // Install into every Claude config directory on the machine, so users
+    // with separate work and personal configs get hooks in all of them.
+    for dir in claude_config_dirs(home) {
+        eprintln!("  Claude config: {}", dir.display());
+        install_claude_code_hooks(&dir.join("settings.json"), &hook_command, force)?;
+    }
+
+    println!("\nDone. MenteDB now runs on every Claude Code turn via hooks:");
+    println!("  UserPromptSubmit  recalls context for the prompt");
+    println!("  PostToolUse       captures significant actions as they happen");
+    println!("  Stop              stores the completed turn");
+    println!("  PreCompact        flushes memory before context is compacted");
+    println!("  SessionStart      injects your profile and standing rules");
+    println!("\nBackend: cloud when logged in (mentedb-mcp login), otherwise a");
+    println!("local daemon that starts automatically on first use.");
+    println!("\nRestart any open Claude Code sessions to activate.");
+    Ok(())
+}
+
+fn install_claude_code_hooks(
+    settings_path: &std::path::Path,
+    hook_command: &str,
+    force: bool,
+) -> anyhow::Result<()> {
+    let raw = std::fs::read_to_string(settings_path).unwrap_or_else(|_| "{}".to_string());
     let mut settings: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
     if !settings.is_object() {
@@ -1109,17 +1170,8 @@ fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    std::fs::write(settings_path, serde_json::to_string_pretty(&settings)?)?;
     eprintln!("  [updated] {}", settings_path.display());
-
-    println!("\nDone. MenteDB now runs on every Claude Code turn via hooks:");
-    println!("  UserPromptSubmit  recalls context for the prompt");
-    println!("  PostToolUse       captures significant actions as they happen");
-    println!("  Stop              stores the completed turn");
-    println!("  PreCompact        flushes memory before context is compacted");
-    println!("  SessionStart      injects your profile and standing rules");
-    println!("\nBackend: cloud when logged in (mentedb-mcp login), otherwise a");
-    println!("local daemon that starts automatically on first use.");
     Ok(())
 }
 

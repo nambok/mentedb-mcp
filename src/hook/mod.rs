@@ -134,8 +134,26 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             };
 
             let backend = Backend::resolve(data_dir, force_local).await?;
-            let ctx = backend.context(&query).await?;
-            if let Some(text) = format_context(&ctx) {
+            let ctx = match backend.context(&query).await {
+                Ok(c) => {
+                    record_auth_state(data_dir, None);
+                    Some(c)
+                }
+                Err(e) => {
+                    record_auth_state(data_dir, Some(&e));
+                    tracing::warn!(error = %e, "context recall failed");
+                    None
+                }
+            };
+            let mut text = ctx.as_ref().and_then(format_context).unwrap_or_default();
+            if let Some(notice) = auth_notice(data_dir) {
+                text = if text.is_empty() {
+                    notice
+                } else {
+                    format!("{notice}\n\n{text}")
+                };
+            }
+            if !text.is_empty() {
                 println!(
                     "{}",
                     json!({
@@ -183,6 +201,7 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                     .await
             }
             .await;
+            record_auth_state(data_dir, store.as_ref().err());
             if let Err(e) = store {
                 tracing::warn!(error = %e, "store_turn failed, spooling for retry");
                 spool::push(
@@ -199,8 +218,29 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
         }
         HookEvent::SessionStart => {
             let backend = Backend::resolve(data_dir, force_local).await?;
-            let ctx = backend.session_context().await?;
-            if let Some(text) = format_session_context(&ctx) {
+            let ctx = match backend.session_context().await {
+                Ok(c) => {
+                    record_auth_state(data_dir, None);
+                    Some(c)
+                }
+                Err(e) => {
+                    record_auth_state(data_dir, Some(&e));
+                    tracing::warn!(error = %e, "session context failed");
+                    None
+                }
+            };
+            let mut text = ctx
+                .as_ref()
+                .and_then(format_session_context)
+                .unwrap_or_default();
+            if let Some(notice) = auth_notice(data_dir) {
+                text = if text.is_empty() {
+                    notice
+                } else {
+                    format!("{notice}\n\n{text}")
+                };
+            }
+            if !text.is_empty() {
                 println!("{text}");
             }
         }
@@ -240,6 +280,32 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
         }
     }
     Ok(())
+}
+
+/// Track whether the last cloud call authenticated. Hooks must never break
+/// the client, so a revoked or expired token would otherwise fail silently
+/// forever; the marker lets context injection tell the user to log in again.
+fn record_auth_state(data_dir: &Path, err: Option<&anyhow::Error>) {
+    let path = data_dir.join("auth_error");
+    match err {
+        Some(e) if e.to_string().contains("authentication failed") => {
+            std::fs::write(&path, "revoked").ok();
+        }
+        // Transient failures (network, 5xx) say nothing about the token.
+        Some(_) => {}
+        None => {
+            std::fs::remove_file(&path).ok();
+        }
+    }
+}
+
+fn auth_notice(data_dir: &Path) -> Option<String> {
+    data_dir.join("auth_error").exists().then(|| {
+        "MenteDB: the cloud session is no longer valid (token expired or revoked). \
+         Tell the user to run `npx mentedb-mcp@latest login` to reconnect. \
+         New memories are spooling locally and will sync automatically after login."
+            .to_string()
+    })
 }
 
 /// Retry every spooled entry against the now-reachable backend. Entries that

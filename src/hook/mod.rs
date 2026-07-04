@@ -270,7 +270,9 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(""),
                             e.get("turn_id").and_then(|v| v.as_u64()).unwrap_or(1),
-                            e.get("project").and_then(|v| v.as_str()).map(str::to_string),
+                            e.get("project")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
                         )
                         .await
                         .is_ok()
@@ -284,7 +286,9 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                     backend
                         .store_note(
                             content,
-                            e.get("project").and_then(|v| v.as_str()).map(str::to_string),
+                            e.get("project")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
                         )
                         .await
                         .is_ok()

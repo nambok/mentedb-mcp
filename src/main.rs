@@ -73,13 +73,13 @@ enum Commands {
     /// Auto-configure MenteDB for your MCP client (Copilot CLI, Claude, Cursor, etc.)
     Setup {
         /// Target client
-        #[arg(value_enum, default_value = "copilot")]
+        #[arg(value_enum, default_value = "claude-code")]
         client: SetupClient,
     },
     /// Update MCP config and agent instructions (overwrites existing entries)
     Update {
         /// Target client
-        #[arg(value_enum, default_value = "copilot")]
+        #[arg(value_enum, default_value = "claude-code")]
         client: SetupClient,
     },
     /// Authenticate with MenteDB Cloud
@@ -708,7 +708,11 @@ async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
     let creds = load_cloud_credentials();
     match &creds {
         Some((api_url, token)) => {
-            println!("  [ok]   Cloud credentials: {} ({})", mask_token(token), api_url);
+            println!(
+                "  [ok]   Cloud credentials: {} ({})",
+                mask_token(token),
+                api_url
+            );
             let client = reqwest::Client::new();
             match client
                 .get(format!("{api_url}/api/me"))
@@ -764,19 +768,17 @@ async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
             ];
             let mut missing = Vec::new();
             for event in expected {
-                let present = settings["hooks"][event]
-                    .as_array()
-                    .is_some_and(|groups| {
-                        groups.iter().any(|g| {
-                            g["hooks"].as_array().is_some_and(|hs| {
-                                hs.iter().any(|h| {
-                                    h["command"]
-                                        .as_str()
-                                        .is_some_and(|c| c.contains("mentedb-mcp"))
-                                })
+                let present = settings["hooks"][event].as_array().is_some_and(|groups| {
+                    groups.iter().any(|g| {
+                        g["hooks"].as_array().is_some_and(|hs| {
+                            hs.iter().any(|h| {
+                                h["command"]
+                                    .as_str()
+                                    .is_some_and(|c| c.contains("mentedb-mcp"))
                             })
                         })
-                    });
+                    })
+                });
                 if !present {
                     missing.push(event);
                 }
@@ -950,7 +952,11 @@ async fn run_sync(data_dir: &std::path::Path) -> anyhow::Result<()> {
     let mut failed = 0usize;
 
     for m in &memories {
-        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
         if id.is_empty() || content.is_empty() || pushed.contains(&id) {
             skipped += 1;

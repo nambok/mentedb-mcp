@@ -309,6 +309,15 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             }
         }
         HookEvent::PreCompact => {
+            // The injection ledger mirrors what is in the model's context;
+            // compaction destroys that context, so the mirror must reset or
+            // it would block re-injection of memories the model just lost.
+            let mut state = load_state(data_dir, &session_id);
+            if !state.injected.is_empty() {
+                state.injected.clear();
+                save_state(data_dir, &session_id, &state);
+            }
+
             // The long session is about to lose context; make sure everything
             // captured so far is durable.
             let backend = Backend::resolve(data_dir, force_local).await?;
@@ -517,6 +526,12 @@ fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<
     inter / union
 }
 
+fn has_tag(m: &serde_json::Value, tag: &str) -> bool {
+    m.get("tags")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(tag)))
+}
+
 /// The injection policy: storage is a library, this is the librarian.
 ///
 /// Filters the recalled memories down to what is actually worth the model's
@@ -526,6 +541,10 @@ fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<
 /// relevance score, no near-duplicates of each other, semantic knowledge
 /// before verbatim episodic, and a hard cap. Returns the filtered context
 /// and the IDs selected, for the session's working-memory ledger.
+///
+/// User-pinned scope:always memories bypass every quality filter: the user
+/// said always, so they are delivered once per context lifetime (the ledger
+/// resets at compaction, when the model's context is destroyed).
 fn filter_for_injection(
     ctx: &serde_json::Value,
     already_injected: &[String],
@@ -540,20 +559,25 @@ fn filter_for_injection(
         .filter_map(|m| m.get("score").and_then(|s| s.as_f64()))
         .fold(f64::NEG_INFINITY, f64::max);
 
+    let not_yet_injected = |m: &serde_json::Value| {
+        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        !id.is_empty() && !already_injected.iter().any(|i| i == id)
+    };
+
+    // Pinned memories skip every quality filter except the ledger.
+    let pinned: Vec<&serde_json::Value> = memories
+        .iter()
+        .filter(|m| has_tag(m, "scope:always") && not_yet_injected(m))
+        .collect();
+
     let mut candidates: Vec<&serde_json::Value> = memories
         .iter()
+        .filter(|m| !has_tag(m, "scope:always") && not_yet_injected(m))
         .filter(|m| {
-            let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            !id.is_empty() && !already_injected.iter().any(|i| i == id)
-        })
-        .filter(|m| {
-            let tags = m.get("tags").and_then(|v| v.as_array());
-            let has_tag =
-                |t: &str| tags.is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(t)));
-            if has_tag("action") {
+            if has_tag(m, "action") {
                 return false;
             }
-            if has_tag("turn") {
+            if has_tag(m, "turn") {
                 let created = m
                     .get("created_at")
                     .and_then(|v| v.as_str())
@@ -581,12 +605,13 @@ fn filter_for_injection(
     candidates
         .sort_by_key(|m| type_rank(m.get("memory_type").and_then(|v| v.as_str()).unwrap_or("")));
 
-    let mut selected: Vec<&serde_json::Value> = Vec::new();
+    let mut selected: Vec<&serde_json::Value> = pinned;
     let mut selected_words: Vec<std::collections::HashSet<String>> = Vec::new();
     let mut episodic_count = 0usize;
+    let budget = MAX_INJECTED + selected.len();
 
     for m in candidates {
-        if selected.len() >= MAX_INJECTED {
+        if selected.len() >= budget {
             break;
         }
         let mtype = m.get("memory_type").and_then(|v| v.as_str()).unwrap_or("");
@@ -894,6 +919,28 @@ mod tests {
         let (_, ids) = filter_for_injection(&ctx, &[], NOW);
         // The distilled fact wins; its verbatim source is a near-duplicate.
         assert_eq!(ids, vec!["fact1".to_string()]);
+    }
+
+    #[test]
+    fn pinned_always_memories_bypass_all_quality_filters() {
+        let hour = 3_600_000_000u64;
+        let ctx = json!({ "memories": [
+            // A pinned memory that would fail every filter: fresh turn tag,
+            // rock-bottom score.
+            mem("pin", "episodic", "never deploy on fridays", &["scope:always", "turn"], hour, 0.01),
+            mem("top", "semantic", "prefers rust services", &[], 100, 1.0),
+        ], "pain": [] });
+        let (_, ids) = filter_for_injection(&ctx, &[], NOW);
+        assert!(
+            ids.contains(&"pin".to_string()),
+            "pinned memory must inject"
+        );
+        assert!(ids.contains(&"top".to_string()));
+
+        // The ledger still applies: once delivered, not repeated within the
+        // same context lifetime.
+        let (_, ids2) = filter_for_injection(&ctx, &ids, NOW);
+        assert!(ids2.is_empty());
     }
 
     #[test]

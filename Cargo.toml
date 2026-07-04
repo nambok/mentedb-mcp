@@ -24,6 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4"] }
+regex = "1"
 schemars = "1"
 axum = { version = "0.7", features = ["json"] }
 open = "5"

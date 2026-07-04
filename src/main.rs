@@ -88,6 +88,11 @@ enum Commands {
     Logout,
     /// Check cloud connection status
     Status,
+    /// Diagnose the full memory pipeline (credentials, hooks, capture, spool)
+    Doctor,
+    /// Push memories from the local database up to MenteDB Cloud
+    #[cfg(feature = "local")]
+    Sync,
     /// Process a client lifecycle hook (reads JSON payload from stdin)
     Hook {
         /// Hook event to process
@@ -118,6 +123,15 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Login) => return run_login().await,
         Some(Commands::Logout) => return run_logout(),
         Some(Commands::Status) => return run_status().await,
+        Some(Commands::Doctor) => {
+            let data_dir = resolve_data_dir(&cli.data_dir);
+            return run_doctor(&data_dir).await;
+        }
+        #[cfg(feature = "local")]
+        Some(Commands::Sync) => {
+            let data_dir = resolve_data_dir(&cli.data_dir);
+            return run_sync(&data_dir).await;
+        }
         Some(Commands::Hook { event }) => {
             // Hooks print only their payload on stdout; logging goes to the
             // data directory so a noisy logger can never corrupt the output
@@ -393,6 +407,12 @@ async fn run_login() -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<String>();
     let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
+    // One-time nonce: the callback only accepts a token from the browser tab
+    // this login opened, so another local process or a malicious page cannot
+    // plant its own credentials.
+    let state_nonce = uuid::Uuid::new_v4().to_string();
+    let expected_state = state_nonce.clone();
+
     let cloud_url = std::env::var("MENTEDB_CLOUD_URL")
         .unwrap_or_else(|_| "https://app.mentedb.com".to_string());
 
@@ -409,15 +429,21 @@ async fn run_login() -> anyhow::Result<()> {
             axum::routing::post(move |body: axum::Json<serde_json::Value>| {
                 let tx = tx_clone.clone();
                 let origin = origin_for_post.clone();
+                let expected_state = expected_state.clone();
                 async move {
                     let api_key = body
                         .get("api_key")
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
+                    let state = body.get("state").and_then(|v| v.as_str()).unwrap_or("");
 
-                    if let Some(sender) = tx.lock().await.take() {
-                        let _ = sender.send(api_key);
+                    if state == expected_state {
+                        if let Some(sender) = tx.lock().await.take() {
+                            let _ = sender.send(api_key);
+                        }
+                    } else {
+                        eprintln!("  [warn] callback with wrong state nonce rejected");
                     }
 
                     let headers = [
@@ -466,7 +492,7 @@ async fn run_login() -> anyhow::Result<()> {
     });
 
     // Open browser
-    let url = format!("{cloud_url}/auth/device?callback_port={port}");
+    let url = format!("{cloud_url}/auth/device?callback_port={port}&state={state_nonce}");
     println!("  Opening browser: {url}");
     println!("  Waiting for authorization...\n");
 
@@ -497,13 +523,7 @@ async fn run_login() -> anyhow::Result<()> {
     });
 
     let config_path = mentedb_dir.join("cloud.json");
-    std::fs::write(&config_path, serde_json::to_string_pretty(&cloud_config)?)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    write_secret_file(&config_path, &serde_json::to_string_pretty(&cloud_config)?)?;
 
     server_handle.abort();
 
@@ -568,8 +588,7 @@ async fn run_status() -> anyhow::Result<()> {
             200 => {
                 println!("  Status: Connected");
                 println!("  Cloud URL: {api_url}");
-                let masked = format!("mdb_{}...", &token[4..12]);
-                println!("  Token: {masked}");
+                println!("  Token: {}", mask_token(token));
 
                 // Fetch account info
                 match client
@@ -646,6 +665,337 @@ fn load_cloud_credentials() -> Option<(String, String)> {
         .unwrap_or_else(|| "https://api.mentedb.com".to_string());
 
     Some((api_url, token.to_string()))
+}
+
+/// Mask a token for display without ever panicking on short values.
+fn mask_token(token: &str) -> String {
+    let prefix: String = token.chars().take(12).collect();
+    format!("{prefix}...")
+}
+
+/// Write a credentials file created with 0600 from the first byte, instead
+/// of writing world-readable and tightening afterwards.
+fn write_secret_file(path: &std::path::Path, contents: &str) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(contents.as_bytes())?;
+        // mode() only applies on create; correct pre-existing files too.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)?;
+    }
+    Ok(())
+}
+
+/// End-to-end pipeline diagnosis: answers "is memory actually working?"
+/// in one command.
+async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    println!("\nMenteDB doctor v{}\n", env!("CARGO_PKG_VERSION"));
+    let mut problems = 0usize;
+
+    // 1. Backend credentials.
+    let creds = load_cloud_credentials();
+    match &creds {
+        Some((api_url, token)) => {
+            println!("  [ok]   Cloud credentials: {} ({})", mask_token(token), api_url);
+            let client = reqwest::Client::new();
+            match client
+                .get(format!("{api_url}/api/me"))
+                .header("Authorization", format!("Bearer {token}"))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let me: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let email = me.get("email").and_then(|v| v.as_str()).unwrap_or("?");
+                    let plan = me.get("plan").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("  [ok]   Cloud reachable, account {email} (plan: {plan})");
+                }
+                Ok(resp) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
+                    problems += 1;
+                    println!("  [FAIL] Token revoked or expired. Run `mentedb-mcp login`.");
+                }
+                Ok(resp) => {
+                    problems += 1;
+                    println!("  [warn] Cloud returned HTTP {}", resp.status());
+                }
+                Err(e) => {
+                    problems += 1;
+                    println!("  [FAIL] Cloud unreachable: {e}");
+                }
+            }
+        }
+        None => {
+            println!("  [info] Not logged in: hooks use the local daemon backend.");
+            #[cfg(not(feature = "local"))]
+            {
+                problems += 1;
+                println!("  [FAIL] This build has no local mode. Run `mentedb-mcp login`.");
+            }
+        }
+    }
+
+    // 2. Claude Code hooks registered.
+    let home = home_dir().unwrap_or_else(|| "~".to_string());
+    let settings_path = std::path::PathBuf::from(&home).join(".claude/settings.json");
+    match std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    {
+        Some(settings) => {
+            let expected = [
+                "UserPromptSubmit",
+                "Stop",
+                "SessionStart",
+                "PostToolUse",
+                "PreCompact",
+            ];
+            let mut missing = Vec::new();
+            for event in expected {
+                let present = settings["hooks"][event]
+                    .as_array()
+                    .is_some_and(|groups| {
+                        groups.iter().any(|g| {
+                            g["hooks"].as_array().is_some_and(|hs| {
+                                hs.iter().any(|h| {
+                                    h["command"]
+                                        .as_str()
+                                        .is_some_and(|c| c.contains("mentedb-mcp"))
+                                })
+                            })
+                        })
+                    });
+                if !present {
+                    missing.push(event);
+                }
+            }
+            if missing.is_empty() {
+                println!("  [ok]   Claude Code hooks: all 5 registered");
+            } else {
+                problems += 1;
+                println!(
+                    "  [FAIL] Claude Code hooks missing: {}. Run `npx mentedb-mcp@latest setup claude-code`.",
+                    missing.join(", ")
+                );
+            }
+        }
+        None => {
+            problems += 1;
+            println!(
+                "  [warn] No Claude Code settings at {}. Run `npx mentedb-mcp@latest setup claude-code`.",
+                settings_path.display()
+            );
+        }
+    }
+
+    // 3. Recent capture activity.
+    let sessions_dir = data_dir.join("hook_sessions");
+    let newest = std::fs::read_dir(&sessions_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+        .max();
+    match newest {
+        Some(t) => {
+            let ago = t.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+            let human = if ago < 120 {
+                format!("{ago}s ago")
+            } else if ago < 7_200 {
+                format!("{}m ago", ago / 60)
+            } else {
+                format!("{}h ago", ago / 3_600)
+            };
+            println!("  [ok]   Last hook activity: {human}");
+        }
+        None => {
+            println!(
+                "  [info] No hook activity yet. Hooks fire in sessions started after setup; start a new Claude Code session."
+            );
+        }
+    }
+
+    // 4. Offline spool depth.
+    let depth = hook::spool::depth(data_dir);
+    if depth == 0 {
+        println!("  [ok]   Offline spool: empty");
+    } else {
+        println!("  [warn] Offline spool: {depth} undelivered entries (retried on next turn)");
+    }
+
+    // 5. Recent hook errors from the log.
+    let today = chrono_free_today();
+    let log_path = data_dir.join(format!("mentedb-hook.log.{today}"));
+    let warns: Vec<String> = std::fs::read_to_string(&log_path)
+        .map(|raw| {
+            raw.lines()
+                .filter(|l| l.contains("WARN") || l.contains("ERROR"))
+                .rev()
+                .take(3)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if warns.is_empty() {
+        println!("  [ok]   Hook log: no recent errors");
+    } else {
+        println!("  [warn] Recent hook errors ({}):", log_path.display());
+        for w in warns.iter().rev() {
+            let trimmed: String = w.chars().take(160).collect();
+            println!("           {trimmed}");
+        }
+    }
+
+    // 6. Local daemon, when that is the active backend.
+    #[cfg(feature = "local")]
+    if creds.is_none() {
+        match crate::daemon::read_info(data_dir) {
+            Some(info) => {
+                let url = format!("http://127.0.0.1:{}/health", info.port);
+                let healthy = reqwest::Client::new()
+                    .get(&url)
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if healthy {
+                    println!("  [ok]   Local daemon: running on port {}", info.port);
+                } else {
+                    println!("  [info] Local daemon: not running (auto-starts on first hook)");
+                }
+            }
+            None => println!("  [info] Local daemon: not started yet (auto-starts on first hook)"),
+        }
+    }
+
+    println!();
+    if problems == 0 {
+        println!("  Everything looks healthy.");
+    } else {
+        println!("  {problems} problem(s) found. Fix the [FAIL] items above.");
+    }
+    Ok(())
+}
+
+/// Today's UTC date as YYYY-MM-DD without pulling in a date crate: the
+/// tracing_appender daily logs use this suffix.
+fn chrono_free_today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86_400;
+    // Civil-from-days (Howard Hinnant's algorithm), valid for the era we run in.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Push every memory in the local database up to MenteDB Cloud, so a user
+/// who started local and later logs in keeps their history. Idempotent via
+/// a ledger of already-pushed memory IDs.
+#[cfg(feature = "local")]
+async fn run_sync(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    let Some((api_url, token)) = load_cloud_credentials() else {
+        anyhow::bail!("Not logged in. Run `mentedb-mcp login` first, then `mentedb-mcp sync`.");
+    };
+
+    println!("\nSyncing local memories to MenteDB Cloud...\n");
+
+    let daemon = hook::backend::LocalDaemonClient::connect_or_spawn(data_dir).await?;
+    let export = daemon.post("/v1/export", serde_json::json!({})).await?;
+    let memories = export
+        .get("memories")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if memories.is_empty() {
+        println!("  Local database has no memories to sync.");
+        return Ok(());
+    }
+
+    let ledger_path = data_dir.join("sync_state.json");
+    let mut pushed: std::collections::HashSet<String> = std::fs::read_to_string(&ledger_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    let client = cloud_client::CloudClient::new(api_url, token);
+    let total = memories.len();
+    let mut sent = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+
+    for m in &memories {
+        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() || content.is_empty() || pushed.contains(&id) {
+            skipped += 1;
+            continue;
+        }
+        let mut tags: Vec<String> = m
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        tags.push("synced-from-local".to_string());
+
+        let args = serde_json::json!({
+            "content": content,
+            "memory_type": m.get("memory_type").and_then(|v| v.as_str()).unwrap_or("episodic"),
+            "tags": tags,
+        });
+        match client.call_tool("store_memory", args).await {
+            Ok(_) => {
+                pushed.insert(id);
+                sent += 1;
+                if sent.is_multiple_of(25) {
+                    println!("  {sent}/{total} pushed...");
+                    std::fs::write(&ledger_path, serde_json::to_string(&pushed)?).ok();
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                if failed <= 3 {
+                    eprintln!("  [warn] failed to push {id}: {e}");
+                }
+            }
+        }
+    }
+    std::fs::write(&ledger_path, serde_json::to_string(&pushed)?)?;
+
+    println!("\n  Done: {sent} pushed, {skipped} already synced or empty, {failed} failed.");
+    if failed > 0 {
+        println!("  Re-run `mentedb-mcp sync` to retry failures.");
+    }
+    Ok(())
 }
 
 fn run_setup(client: SetupClient, force: bool) -> anyhow::Result<()> {

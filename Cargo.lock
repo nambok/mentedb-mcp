@@ -1850,6 +1850,7 @@ dependencies = [
  "mentedb-graph",
  "open",
  "openssl",
+ "regex",
  "reqwest",
  "rmcp",
  "schemars",

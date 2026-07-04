@@ -249,7 +249,9 @@ fn hook_full_turn_loop_with_autospawn() {
     assert_eq!(state["turn_id"], 1);
     assert!(state["pending_prompt"].is_null());
 
-    // Turn 2: the prompt hook must now recall the stored turn as context.
+    // Turn 2: the injection policy deliberately suppresses turns this fresh
+    // (they are still in the model's context window), so the prompt hook
+    // must print nothing.
     let out = run_hook(
         dir.path(),
         "user-prompt",
@@ -259,18 +261,29 @@ fn hook_full_turn_loop_with_autospawn() {
             "hook_event_name": "UserPromptSubmit",
         }),
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(out.trim()).expect("hook must print valid JSON when it has context");
-    let ctx = parsed["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .expect("additionalContext present");
-    assert_eq!(
-        parsed["hookSpecificOutput"]["hookEventName"],
-        "UserPromptSubmit"
-    );
     assert!(
-        ctx.contains("nightjar"),
-        "recalled context must contain the stored fact, got: {ctx}"
+        out.trim().is_empty(),
+        "fresh same-session turns are echo and must not be injected, got: {out}"
+    );
+
+    // The turn is nonetheless stored and retrievable: ask the daemon
+    // directly, below the injection policy.
+    let info = wait_for_daemon(dir.path(), Duration::from_secs(30));
+    let (code, body) = daemon_post(
+        &info,
+        "/v1/context",
+        &serde_json::json!({ "prompt": "what is my project codename", "limit": 8 }),
+    );
+    assert_eq!(code, 200);
+    let recalled: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let memories = recalled["memories"].as_array().cloned().unwrap_or_default();
+    assert!(
+        memories.iter().any(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("nightjar"))
+        }),
+        "stored turn must be retrievable from the daemon, got: {recalled}"
     );
 
     drop(guard);

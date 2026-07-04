@@ -53,6 +53,14 @@ struct SessionState {
     /// follow-up prompts still retrieve on-topic memories.
     #[serde(default)]
     last_user_message: Option<String>,
+    /// Memory IDs already injected this session: working memory for the
+    /// injector, so the same fact is never re-told turn after turn.
+    #[serde(default)]
+    injected: Vec<String>,
+    /// Last stored action note, to collapse consecutive duplicates
+    /// (iterating on one file should not produce N identical memories).
+    #[serde(default)]
+    last_note: Option<String>,
 }
 
 fn state_path(data_dir: &Path, session_id: &str) -> PathBuf {
@@ -145,7 +153,22 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                     None
                 }
             };
-            let mut text = ctx.as_ref().and_then(format_context).unwrap_or_default();
+            let mut text = String::new();
+            if let Some(ctx) = &ctx {
+                let (filtered, injected_ids) =
+                    filter_for_injection(ctx, &state.injected, now_micros());
+                if !injected_ids.is_empty() {
+                    let mut state = load_state(data_dir, &session_id);
+                    state.injected.extend(injected_ids);
+                    // Bounded ledger: ancient sessions can re-surface things.
+                    let excess = state.injected.len().saturating_sub(300);
+                    if excess > 0 {
+                        state.injected.drain(..excess);
+                    }
+                    save_state(data_dir, &session_id, &state);
+                }
+                text = format_context(&filtered).unwrap_or_default();
+            }
             if let Some(notice) = auth_notice(data_dir) {
                 text = if text.is_empty() {
                     notice
@@ -166,12 +189,15 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             }
         }
         HookEvent::Stop => {
+            // The user message carries the signal; the assistant reply is
+            // mostly restatement. 2k chars is plenty for distillation and
+            // stops verbatim transcripts bloating the store.
             let assistant: String = payload
                 .get("last_assistant_message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .chars()
-                .take(16_000)
+                .take(2_000)
                 .collect();
             let assistant = redact(&assistant);
 
@@ -252,6 +278,16 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 return Ok(());
             };
             let note = redact(&note);
+
+            // Iterating on one file fires this hook repeatedly with the
+            // identical note; one memory carries all the information.
+            let mut state = load_state(data_dir, &session_id);
+            if state.last_note.as_deref() == Some(note.as_str()) {
+                return Ok(());
+            }
+            state.last_note = Some(note.clone());
+            save_state(data_dir, &session_id, &state);
+
             let project = payload
                 .get("cwd")
                 .and_then(|v| v.as_str())
@@ -438,6 +474,158 @@ fn summarize_tool_action(payload: &serde_json::Value) -> Option<String> {
 
 const CONTEXT_CHAR_BUDGET: usize = 4_000;
 
+/// Raw turns younger than this are either still in the model's context or
+/// fresh in the user's head; injecting them is echo, not memory. Distilled
+/// facts take over once the nightly sweep has run.
+const FRESH_TURN_HORIZON_US: u64 = 12 * 3600 * 1_000_000;
+/// Keep an item only if it scores at least this fraction of the top hit,
+/// scale-free so it works for any backend's score range.
+const RELATIVE_SCORE_FLOOR: f64 = 0.4;
+/// Verbatim episodic memories allowed per injection; semantic knowledge
+/// gets the rest of the slots.
+const MAX_EPISODIC_INJECTED: usize = 2;
+const MAX_INJECTED: usize = 6;
+/// Word-overlap ratio above which two candidates are the same information
+/// (a distilled fact and its source turn embed almost identically).
+const NEAR_DUP_JACCARD: f64 = 0.7;
+
+fn type_rank(memory_type: &str) -> usize {
+    match memory_type.to_lowercase().as_str() {
+        "anti_pattern" | "antipattern" => 0,
+        "correction" => 1,
+        "semantic" => 2,
+        "procedural" => 3,
+        "reasoning" => 4,
+        _ => 5, // episodic and unknown last
+    }
+}
+
+fn word_set(text: &str) -> std::collections::HashSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let inter = a.intersection(b).count() as f64;
+    let union = (a.len() + b.len()) as f64 - inter;
+    inter / union
+}
+
+/// The injection policy: storage is a library, this is the librarian.
+///
+/// Filters the recalled memories down to what is actually worth the model's
+/// attention right now: nothing already injected this session, no action
+/// notes (they exist for distillation and resume, not topical recall), no
+/// raw turns fresh enough to still be in context, nothing far below the top
+/// relevance score, no near-duplicates of each other, semantic knowledge
+/// before verbatim episodic, and a hard cap. Returns the filtered context
+/// and the IDs selected, for the session's working-memory ledger.
+fn filter_for_injection(
+    ctx: &serde_json::Value,
+    already_injected: &[String],
+    now_us: u64,
+) -> (serde_json::Value, Vec<String>) {
+    let Some(memories) = ctx.get("memories").and_then(|v| v.as_array()) else {
+        return (ctx.clone(), Vec::new());
+    };
+
+    let top_score = memories
+        .iter()
+        .filter_map(|m| m.get("score").and_then(|s| s.as_f64()))
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    let mut candidates: Vec<&serde_json::Value> = memories
+        .iter()
+        .filter(|m| {
+            let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            !id.is_empty() && !already_injected.iter().any(|i| i == id)
+        })
+        .filter(|m| {
+            let tags = m.get("tags").and_then(|v| v.as_array());
+            let has_tag =
+                |t: &str| tags.is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(t)));
+            if has_tag("action") {
+                return false;
+            }
+            if has_tag("turn") {
+                let created = m
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u64>().ok());
+                if let Some(created) = created
+                    && now_us.saturating_sub(created) < FRESH_TURN_HORIZON_US
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .filter(|m| {
+            match (
+                m.get("score").and_then(|s| s.as_f64()),
+                top_score.is_finite(),
+            ) {
+                (Some(s), true) => s >= top_score * RELATIVE_SCORE_FLOOR,
+                _ => true, // no scores plumbed: keep
+            }
+        })
+        .collect();
+
+    // Semantic knowledge first, verbatim episodic last.
+    candidates
+        .sort_by_key(|m| type_rank(m.get("memory_type").and_then(|v| v.as_str()).unwrap_or("")));
+
+    let mut selected: Vec<&serde_json::Value> = Vec::new();
+    let mut selected_words: Vec<std::collections::HashSet<String>> = Vec::new();
+    let mut episodic_count = 0usize;
+
+    for m in candidates {
+        if selected.len() >= MAX_INJECTED {
+            break;
+        }
+        let mtype = m.get("memory_type").and_then(|v| v.as_str()).unwrap_or("");
+        let is_episodic = mtype.eq_ignore_ascii_case("episodic");
+        if is_episodic && episodic_count >= MAX_EPISODIC_INJECTED {
+            continue;
+        }
+        let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let words = word_set(content);
+        if selected_words
+            .iter()
+            .any(|w| jaccard(w, &words) > NEAR_DUP_JACCARD)
+        {
+            continue;
+        }
+        if is_episodic {
+            episodic_count += 1;
+        }
+        selected_words.push(words);
+        selected.push(m);
+    }
+
+    let ids: Vec<String> = selected
+        .iter()
+        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+
+    let mut filtered = ctx.clone();
+    filtered["memories"] = serde_json::json!(selected);
+    (filtered, ids)
+}
+
+fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
 /// Render backend context JSON ({memories: [...], pain: [...]}) into the text
 /// injected into the model context. Returns None when there is nothing worth
 /// injecting.
@@ -617,6 +805,95 @@ mod tests {
         // Missing fields do not panic.
         assert!(summarize_tool_action(&json!({})).is_none());
         assert!(summarize_tool_action(&json!({ "tool_name": "Bash" })).is_none());
+    }
+
+    fn mem(
+        id: &str,
+        mtype: &str,
+        content: &str,
+        tags: &[&str],
+        age_us: u64,
+        score: f64,
+    ) -> serde_json::Value {
+        let created = 2_000_000_000_000_000u64 - age_us;
+        json!({
+            "id": id,
+            "memory_type": mtype,
+            "content": content,
+            "tags": tags,
+            "created_at": created.to_string(),
+            "score": score,
+        })
+    }
+
+    const NOW: u64 = 2_000_000_000_000_000;
+
+    #[test]
+    fn injection_skips_already_injected_and_actions() {
+        let ctx = json!({ "memories": [
+            mem("a", "semantic", "user prefers rust", &[], 100, 1.0),
+            mem("b", "episodic", "Edited file: src/main.rs", &["action"], 100, 0.9),
+            mem("c", "semantic", "deploys use v tags", &[], 100, 0.9),
+        ], "pain": [] });
+        let (filtered, ids) = filter_for_injection(&ctx, &["a".to_string()], NOW);
+        assert_eq!(ids, vec!["c".to_string()]);
+        assert_eq!(filtered["memories"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn injection_drops_fresh_turns_keeps_old_ones() {
+        let hour = 3_600_000_000u64;
+        let ctx = json!({ "memories": [
+            mem("fresh", "episodic", "User: hi there Assistant: hello friend", &["turn"], hour, 1.0),
+            mem("old", "episodic", "User: deploy plan? Assistant: use tags", &["turn"], 48 * hour, 0.9),
+        ], "pain": [] });
+        let (_, ids) = filter_for_injection(&ctx, &[], NOW);
+        assert_eq!(ids, vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn injection_applies_relative_score_floor_and_caps() {
+        let mut memories: Vec<serde_json::Value> = vec![mem(
+            "weak",
+            "semantic",
+            "barely related trivia entry",
+            &[],
+            100,
+            0.1,
+        )];
+        let facts = [
+            "prefers rust for backend services",
+            "uses postgres with logical replication",
+            "deploys ride fargate behind cloudfront",
+            "billing runs through stripe webhooks",
+            "embeddings come from titan on bedrock",
+            "frontend built with vite and tailwind",
+            "auth handled by cognito user pools",
+            "monitoring lives in cloudwatch dashboards",
+            "queue processing goes through sqs lambda",
+            "dns zones managed inside route fiftythree",
+        ];
+        for (i, fact) in facts.iter().enumerate() {
+            memories.push(mem(&format!("s{i}"), "semantic", fact, &[], 100, 1.0));
+        }
+        let ctx = json!({ "memories": memories, "pain": [] });
+        let (_, ids) = filter_for_injection(&ctx, &[], NOW);
+        assert!(
+            !ids.contains(&"weak".to_string()),
+            "sub-floor item injected"
+        );
+        assert_eq!(ids.len(), MAX_INJECTED);
+    }
+
+    #[test]
+    fn injection_prefers_semantic_and_dedups_near_duplicates() {
+        let ctx = json!({ "memories": [
+            mem("turn1", "episodic", "User: remember the deploy uses v tags on the platform repo", &["turn"], 100_000_000_000, 1.0),
+            mem("fact1", "semantic", "the deploy uses v tags on the platform repo", &[], 100, 0.95),
+        ], "pain": [] });
+        let (_, ids) = filter_for_injection(&ctx, &[], NOW);
+        // The distilled fact wins; its verbatim source is a near-duplicate.
+        assert_eq!(ids, vec!["fact1".to_string()]);
     }
 
     #[test]

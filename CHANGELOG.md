@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.10](https://github.com/nambok/mentedb-mcp/compare/v0.5.9...v0.5.10) - 2026-07-04
+
+### Added
+
+- redaction, offline spool, sync, doctor, and hook pipeline hardening ([#90](https://github.com/nambok/mentedb-mcp/pull/90))
+
 ## [0.5.9](https://github.com/nambok/mentedb-mcp/compare/v0.5.8...v0.5.9) - 2026-07-03
 
 ### Fixed

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.11](https://github.com/nambok/mentedb-mcp/compare/v0.5.10...v0.5.11) - 2026-07-04
+
+### Added
+
+- default setup and update to claude-code ([#92](https://github.com/nambok/mentedb-mcp/pull/92))
+
 ## [0.5.10](https://github.com/nambok/mentedb-mcp/compare/v0.5.9...v0.5.10) - 2026-07-04
 
 ### Added

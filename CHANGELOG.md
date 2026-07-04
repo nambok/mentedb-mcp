@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.15](https://github.com/nambok/mentedb-mcp/compare/v0.5.14...v0.5.15) - 2026-07-04
+
+### Added
+
+- native engine injection attention with outcome reporting ([#100](https://github.com/nambok/mentedb-mcp/pull/100))
+
 ## [0.5.14](https://github.com/nambok/mentedb-mcp/compare/v0.5.13...v0.5.14) - 2026-07-04
 
 ### Fixed

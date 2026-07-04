@@ -91,6 +91,8 @@ struct TurnRequest {
     turn_id: u64,
     #[serde(default)]
     project_context: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 async fn turn(
@@ -110,6 +112,7 @@ async fn turn(
             turn_id: req.turn_id,
             project_context: req.project_context,
             agent_id: None,
+            session_id: req.session_id,
         }))
         .await
         .map_err(|e| {
@@ -181,6 +184,111 @@ async fn flush(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct InjectionContextRequest {
+    query: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    exclude_ids: Vec<String>,
+    #[serde(default)]
+    max_items: Option<usize>,
+    #[serde(default)]
+    max_episodic: Option<usize>,
+}
+
+/// Injection-ready context through the engine's attention policy.
+async fn injection_context(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Json(req): Json<InjectionContextRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let db = state.server.db_ref();
+    let embedding = db.embed_text(&req.query).ok().flatten().unwrap_or_default();
+    let exclude: Vec<mentedb::prelude::MemoryId> = req
+        .exclude_ids
+        .iter()
+        .filter_map(|s| uuid::Uuid::parse_str(s).ok())
+        .map(mentedb::prelude::MemoryId)
+        .collect();
+
+    let query = mentedb::injection::InjectionQuery {
+        embedding: &embedding,
+        query_text: Some(&req.query),
+        session_id: req.session_id.as_deref(),
+        exclude_ids: &exclude,
+        max_items: req.max_items.unwrap_or(6).min(20),
+        max_episodic: req.max_episodic.unwrap_or(2).min(10),
+    };
+    let selected = db.recall_for_injection(&query).map_err(|e| {
+        tracing::error!(error = %e, "injection recall failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let memories: Vec<serde_json::Value> = selected
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.node.id.to_string(),
+                "content": c.node.content,
+                "memory_type": memory_type_str(&c.node.memory_type),
+                "tags": c.node.tags,
+                "created_at": c.node.created_at.to_string(),
+                "score": c.score,
+                "reason": match c.reason {
+                    mentedb::injection::SelectionReason::Pinned => "pinned",
+                    mentedb::injection::SelectionReason::Relevant => "relevant",
+                },
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "memories": memories, "pain": [] })))
+}
+
+#[derive(Deserialize)]
+struct InjectionOutcomeRequest {
+    #[serde(default)]
+    shown_ids: Vec<String>,
+    #[serde(default)]
+    assistant_text: String,
+}
+
+/// Close the attention loop: usage detection against the reply.
+async fn injection_outcome(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Json(req): Json<InjectionOutcomeRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let db = state.server.db_ref();
+    let shown: Vec<mentedb::prelude::MemoryId> = req
+        .shown_ids
+        .iter()
+        .filter_map(|s| uuid::Uuid::parse_str(s).ok())
+        .map(mentedb::prelude::MemoryId)
+        .collect();
+    let reply_embedding = if req.assistant_text.is_empty() {
+        None
+    } else {
+        db.embed_text(&req.assistant_text).ok().flatten()
+    };
+    let (shown_updated, used) = db
+        .record_injection_outcome(&shown, reply_embedding.as_deref())
+        .map_err(|e| {
+            tracing::error!(error = %e, "injection outcome failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if let Err(e) = db.flush() {
+        tracing::warn!(error = %e, "post-outcome flush failed");
+    }
+    Ok(Json(json!({ "shown": shown_updated, "used": used })))
 }
 
 /// Dump every memory for `mentedb-mcp sync` (local to cloud migration).
@@ -271,6 +379,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .route("/v1/flush", post(flush))
         .route("/v1/session-context", post(session_context))
         .route("/v1/export", post(export))
+        .route("/v1/injection-context", post(injection_context))
+        .route("/v1/injection-outcome", post(injection_outcome))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

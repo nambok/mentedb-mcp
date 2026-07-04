@@ -71,6 +71,83 @@ impl Backend {
         }
     }
 
+    /// Injection-ready context through the engine's native attention policy
+    /// (session exclusion, ledger, knee, MMR, quotas, pinned bypass).
+    /// Returns None when the backend predates the API, so the caller can
+    /// fall back to the local heuristic filter.
+    pub async fn injection_context(
+        &self,
+        query: &str,
+        session_id: &str,
+        exclude_ids: &[String],
+    ) -> Option<serde_json::Value> {
+        match self {
+            Backend::Cloud(client) => {
+                let resp = client
+                    .call_tool(
+                        "get_injection_context",
+                        json!({
+                            "query": query,
+                            "session_id": session_id,
+                            "exclude_ids": exclude_ids,
+                        }),
+                    )
+                    .await
+                    .ok()?;
+                let text = resp.content.first().map(|c| c.text.clone())?;
+                if resp.is_error {
+                    // Older gateway: unknown tool comes back as a tool error.
+                    return None;
+                }
+                let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+                parsed.get("memories")?.as_array()?;
+                Some(json!({
+                    "memories": parsed["memories"],
+                    "pain": parsed.get("pain").cloned().unwrap_or_else(|| json!([])),
+                }))
+            }
+            #[cfg(feature = "local")]
+            Backend::Local(client) => client
+                .post(
+                    "/v1/injection-context",
+                    json!({
+                        "query": query,
+                        "session_id": session_id,
+                        "exclude_ids": exclude_ids,
+                    }),
+                )
+                .await
+                .ok(),
+        }
+    }
+
+    /// Close the attention loop: report which injected memories the reply
+    /// drew on. Best-effort; older backends simply ignore it.
+    pub async fn record_injection_outcome(&self, shown_ids: &[String], assistant_text: &str) {
+        if shown_ids.is_empty() {
+            return;
+        }
+        match self {
+            Backend::Cloud(client) => {
+                let _ = client
+                    .call_tool(
+                        "record_injection_outcome",
+                        json!({ "shown_ids": shown_ids, "assistant_text": assistant_text }),
+                    )
+                    .await;
+            }
+            #[cfg(feature = "local")]
+            Backend::Local(client) => {
+                let _ = client
+                    .post(
+                        "/v1/injection-outcome",
+                        json!({ "shown_ids": shown_ids, "assistant_text": assistant_text }),
+                    )
+                    .await;
+            }
+        }
+    }
+
     /// Store a completed turn through the full process_turn pipeline.
     pub async fn store_turn(
         &self,
@@ -78,12 +155,14 @@ impl Backend {
         assistant_response: &str,
         turn_id: u64,
         project_context: Option<String>,
+        session_id: &str,
     ) -> anyhow::Result<()> {
         let args = json!({
             "user_message": user_message,
             "assistant_response": assistant_response,
             "turn_id": turn_id,
             "project_context": project_context,
+            "session_id": session_id,
         });
         match self {
             Backend::Cloud(client) => {

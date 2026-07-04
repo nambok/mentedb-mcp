@@ -161,6 +161,10 @@ pub struct ProcessTurnRequest {
     pub project_context: Option<String>,
     #[schemars(description = "Optional agent UUID. Defaults to nil UUID if not provided.")]
     pub agent_id: Option<String>,
+    #[schemars(
+        description = "Originating session ID. Stored turns are tagged with it so injection recall can exclude them for that session."
+    )]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -57,6 +57,10 @@ struct SessionState {
     /// injector, so the same fact is never re-told turn after turn.
     #[serde(default)]
     injected: Vec<String>,
+    /// Memory IDs injected on the most recent prompt, awaiting outcome
+    /// reporting when the turn's reply arrives at Stop.
+    #[serde(default)]
+    last_injected: Vec<String>,
     /// Last stored action note, to collapse consecutive duplicates
     /// (iterating on one file should not produce N identical memories).
     #[serde(default)]
@@ -142,32 +146,57 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             };
 
             let backend = Backend::resolve(data_dir, force_local).await?;
-            let ctx = match backend.context(&query).await {
-                Ok(c) => {
+
+            // Native path: the engine owns selection (session exclusion,
+            // ledger, knee, MMR, quotas, pinned bypass). Fallback: raw
+            // recall shaped by the local heuristic filter, for backends
+            // that predate the injection API.
+            let native = backend
+                .injection_context(&query, &session_id, &state.injected)
+                .await;
+            let (ctx, injected_ids) = match native {
+                Some(ctx) => {
                     record_auth_state(data_dir, None);
-                    Some(c)
+                    let ids: Vec<String> = ctx["memories"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (Some(ctx), ids)
                 }
-                Err(e) => {
-                    record_auth_state(data_dir, Some(&e));
-                    tracing::warn!(error = %e, "context recall failed");
-                    None
-                }
+                None => match backend.context(&query).await {
+                    Ok(c) => {
+                        record_auth_state(data_dir, None);
+                        let (filtered, ids) =
+                            filter_for_injection(&c, &state.injected, now_micros());
+                        (Some(filtered), ids)
+                    }
+                    Err(e) => {
+                        record_auth_state(data_dir, Some(&e));
+                        tracing::warn!(error = %e, "context recall failed");
+                        (None, Vec::new())
+                    }
+                },
             };
+
             let mut text = String::new();
             if let Some(ctx) = &ctx {
-                let (filtered, injected_ids) =
-                    filter_for_injection(ctx, &state.injected, now_micros());
                 if !injected_ids.is_empty() {
                     let mut state = load_state(data_dir, &session_id);
-                    state.injected.extend(injected_ids);
+                    state.injected.extend(injected_ids.clone());
                     // Bounded ledger: ancient sessions can re-surface things.
                     let excess = state.injected.len().saturating_sub(300);
                     if excess > 0 {
                         state.injected.drain(..excess);
                     }
+                    state.last_injected = injected_ids;
                     save_state(data_dir, &session_id, &state);
                 }
-                text = format_context(&filtered).unwrap_or_default();
+                text = format_context(ctx).unwrap_or_default();
             }
             if let Some(notice) = auth_notice(data_dir) {
                 text = if text.is_empty() {
@@ -219,11 +248,25 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
 
+            let outcome_ids = std::mem::take(&mut state.last_injected);
+            save_state(data_dir, &session_id, &state);
+
             let store = async {
                 let backend = Backend::resolve(data_dir, force_local).await?;
                 flush_spool(data_dir, &backend).await;
+                // Attention learns: report which injected memories this
+                // reply actually drew on before storing the turn.
                 backend
-                    .store_turn(&user_message, &assistant, turn_id, project.clone())
+                    .record_injection_outcome(&outcome_ids, &assistant)
+                    .await;
+                backend
+                    .store_turn(
+                        &user_message,
+                        &assistant,
+                        turn_id,
+                        project.clone(),
+                        &session_id,
+                    )
                     .await
             }
             .await;
@@ -238,6 +281,7 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                         "assistant_response": assistant,
                         "turn_id": turn_id,
                         "project": project,
+                        "session_id": session_id,
                     }),
                 );
             }
@@ -384,6 +428,7 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                             e.get("project")
                                 .and_then(|v| v.as_str())
                                 .map(str::to_string),
+                            e.get("session_id").and_then(|v| v.as_str()).unwrap_or(""),
                         )
                         .await
                         .is_ok()

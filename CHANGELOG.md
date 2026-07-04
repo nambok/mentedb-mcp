@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.13](https://github.com/nambok/mentedb-mcp/compare/v0.5.12...v0.5.13) - 2026-07-04
+
+### Added
+
+- injection attention policy with session working memory and relevance floor ([#96](https://github.com/nambok/mentedb-mcp/pull/96))
+
 ## [0.5.12](https://github.com/nambok/mentedb-mcp/compare/v0.5.11...v0.5.12) - 2026-07-04
 
 ### Fixed

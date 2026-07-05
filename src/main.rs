@@ -529,22 +529,71 @@ async fn run_login() -> anyhow::Result<()> {
     // Open browser
     let url = format!("{cloud_url}/auth/device?callback_port={port}&state={state_nonce}");
     println!("  Opening browser: {url}");
-    println!("  Waiting for authorization...\n");
 
     if open::that(&url).is_err() {
         println!("  Could not open browser automatically.");
-        println!("  Please visit: {url}\n");
+        println!("  Please visit: {url}");
     }
 
-    // Wait for token (with timeout)
-    let token = tokio::time::timeout(std::time::Duration::from_secs(300), rx)
-        .await
-        .map_err(|_| anyhow::anyhow!("Login timed out after 5 minutes"))?
-        .map_err(|_| anyhow::anyhow!("Login cancelled"))?;
+    let api_url =
+        std::env::var("MENTEDB_API_URL").unwrap_or_else(|_| "https://api.mentedb.com".to_string());
 
-    if token.is_empty() {
-        anyhow::bail!("Received empty token");
+    println!("\n  Waiting for authorization...");
+    println!("  On SSH or a remote machine, the browser cannot reach this process.");
+    println!("  In that case the page shows a connection code after you authorize.");
+    println!("  Paste it here and press Enter:\n");
+
+    // Whichever arrives first wins: the browser callback (same machine) or a
+    // manually pasted connection code (SSH and remote sessions).
+    async fn read_pasted_code() -> Option<String> {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let code = line.trim().to_string();
+                    if !code.is_empty() {
+                        return Some(code);
+                    }
+                }
+                _ => return None,
+            }
+        }
     }
+
+    let token = tokio::select! {
+        cb = rx => {
+            let t = cb.map_err(|_| anyhow::anyhow!("Login cancelled"))?;
+            if t.is_empty() {
+                anyhow::bail!("Received empty token");
+            }
+            t
+        }
+        pasted = read_pasted_code() => {
+            let Some(code) = pasted else {
+                anyhow::bail!("Login cancelled");
+            };
+            // A pasted code is typed by hand; verify it against the API
+            // before persisting so typos fail loudly here.
+            print!("  Verifying code... ");
+            let client = reqwest::Client::new();
+            let ok = client
+                .get(format!("{api_url}/api/usage"))
+                .bearer_auth(&code)
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if !ok {
+                anyhow::bail!("The pasted code was rejected by the API. Run login again.");
+            }
+            println!("ok");
+            code
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
+            anyhow::bail!("Login timed out after 5 minutes");
+        }
+    };
 
     // Save to ~/.mentedb/cloud.json
     let home = home_dir().unwrap_or_else(|| "~".to_string());

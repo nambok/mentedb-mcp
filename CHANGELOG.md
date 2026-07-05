@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.17](https://github.com/nambok/mentedb-mcp/compare/v0.5.16...v0.5.17) - 2026-07-05
+
+### Added
+
+- login accepts a pasted connection code for SSH and remote sessions ([#104](https://github.com/nambok/mentedb-mcp/pull/104))
+
 ## [0.5.16](https://github.com/nambok/mentedb-mcp/compare/v0.5.15...v0.5.16) - 2026-07-04
 
 ### Other

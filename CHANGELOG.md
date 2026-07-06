@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.20](https://github.com/nambok/mentedb-mcp/compare/v0.5.19...v0.5.20) - 2026-07-06
+
+### Added
+
+- cloud tool parity, batch stores and session provenance, README refresh ([#110](https://github.com/nambok/mentedb-mcp/pull/110))
+
 ## [0.5.19](https://github.com/nambok/mentedb-mcp/compare/v0.5.18...v0.5.19) - 2026-07-06
 
 ### Added

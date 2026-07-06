@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.18](https://github.com/nambok/mentedb-mcp/compare/v0.5.17...v0.5.18) - 2026-07-06
+
+### Added
+
+- advertise client version and surface update advice at session start ([#106](https://github.com/nambok/mentedb-mcp/pull/106))
+
 ## [0.5.17](https://github.com/nambok/mentedb-mcp/compare/v0.5.16...v0.5.17) - 2026-07-05
 
 ### Added

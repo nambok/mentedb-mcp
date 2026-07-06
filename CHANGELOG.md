@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.19](https://github.com/nambok/mentedb-mcp/compare/v0.5.18...v0.5.19) - 2026-07-06
+
+### Added
+
+- surface plan limit notice inside the assistant's context ([#108](https://github.com/nambok/mentedb-mcp/pull/108))
+
 ## [0.5.18](https://github.com/nambok/mentedb-mcp/compare/v0.5.17...v0.5.18) - 2026-07-06
 
 ### Added

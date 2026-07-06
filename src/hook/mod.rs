@@ -757,12 +757,22 @@ fn format_session_context(ctx: &serde_json::Value) -> Option<String> {
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
+    let update_msg = ctx
+        .get("client_update")
+        .and_then(|u| u.get("message"))
+        .and_then(|v| v.as_str());
 
-    if profile.is_empty() && always.is_empty() {
+    if profile.is_empty() && always.is_empty() && update_msg.is_none() {
         return None;
     }
 
-    let mut text = String::from("MenteDB persistent memory for this user:\n");
+    let mut text = String::new();
+    if let Some(msg) = update_msg {
+        // Surfaced inside the assistant's context so the user is told to
+        // update without ever checking the dashboard.
+        text.push_str(&format!("[MenteDB] {msg}\n\n"));
+    }
+    text.push_str("MenteDB persistent memory for this user:\n");
     if !profile.is_empty() {
         text.push_str("## User profile\n");
         text.push_str(profile);

@@ -55,6 +55,8 @@ impl CloudClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Content-Type", "application/json")
+            // Lets the platform advise when this client is outdated.
+            .header("x-mentedb-client", env!("CARGO_PKG_VERSION"))
             .json(&ToolCallRequest {
                 name: name.to_string(),
                 arguments,

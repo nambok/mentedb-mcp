@@ -35,6 +35,34 @@ pub struct ProcessTurnRequest {
     pub project_context: Option<String>,
     #[schemars(description = "Optional agent UUID. Defaults to nil UUID if not provided.")]
     pub agent_id: Option<String>,
+    #[schemars(
+        description = "Originating session id; stored turns are tagged with it so injection recall can exclude the requesting session's own turns."
+    )]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct StoreMemoryItem {
+    #[schemars(description = "The text content of the memory to store")]
+    pub content: String,
+    #[schemars(
+        description = "Memory type: episodic, semantic, procedural, anti_pattern, reasoning, or correction"
+    )]
+    pub memory_type: String,
+    #[schemars(description = "Optional tags for categorization")]
+    pub tags: Option<Vec<String>>,
+    #[schemars(description = "Memory scope: 'contextual' (default) or 'always'")]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct StoreMemoriesRequest {
+    #[schemars(description = "Memories to store in one batch transaction (at most 100)")]
+    pub memories: Vec<StoreMemoryItem>,
+    #[schemars(
+        description = "Optional agent UUID; stored memories belong to this agent for scoped retrieval"
+    )]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -129,6 +157,20 @@ impl CloudMenteDbServer {
     ) -> Result<CallToolResult, McpError> {
         self.proxy_tool(
             "process_turn",
+            serde_json::to_value(&req).unwrap_or_default(),
+        )
+        .await
+    }
+
+    #[rmcp::tool(
+        description = "Store several memories in one batch transaction: one lock and flush for the whole set, with near duplicate rejection. Prefer this over repeated store_memory calls."
+    )]
+    async fn store_memories(
+        &self,
+        Parameters(req): Parameters<StoreMemoriesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        self.proxy_tool(
+            "store_memories",
             serde_json::to_value(&req).unwrap_or_default(),
         )
         .await

@@ -24,6 +24,8 @@ Then authenticate:
 npx mentedb-mcp@latest login
 ```
 
+Login is optional: without it, everything runs locally (see Local mode). On a remote or SSH session the browser cannot reach the CLI callback; after you authorize, the dashboard shows a connection code to paste into the waiting terminal.
+
 That's it. Your agent now has persistent memory that works across all your sessions and devices. Replace `copilot` with `cursor` or `claude` for other editors.
 
 ### Claude Code: hooks instead of MCP (recommended)
@@ -187,8 +189,17 @@ By default, the server exposes 4 essential tools:
 |------|-------------|
 | `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions, generates pain warnings. Triggers automatic enrichment when LLM is configured. Accepts `project_context` and `agent_id` for scoping. |
 | `store_memory` | Store an important fact with type, tags, and optional scope. |
+| `store_memories` | Store several memories in one batch transaction (one lock and flush, near duplicate rejection). Accepts optional `agent_id` for scoped ownership. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. Accepts `limit` (default 10, max 50) and `memory_type` filter. |
 | `forget_memory` | Delete a memory by ID. Accepts optional `reason` for audit logging. |
+
+### Multi agent isolation
+
+Pass an `agent_id` (any stable UUID per agent) to `process_turn` and `store_memories` and each agent recalls only its own memories plus shared ones (stored without an agent). Omit it and everything stays globally visible, matching single agent behavior. A coding agent and a research agent sharing one database no longer contaminate each other's context.
+
+### Plan limits
+
+Hitting a monthly limit never breaks recall: reads keep working, new turns are served read only, and the injected context carries a notice so the assistant can tell the user. Upgrading unblocks instantly.
 
 ### What `process_turn` returns
 

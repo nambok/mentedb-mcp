@@ -737,11 +737,22 @@ fn format_context(ctx: &serde_json::Value) -> Option<String> {
         }
     }
 
-    if out.is_empty() && warnings.is_empty() {
+    // Plan limit notices ride the injection payload because it reaches the
+    // assistant on every prompt; without this the limit was invisible and
+    // memory just silently stopped storing.
+    let limit_notice = ctx.get("limit_notice").and_then(|v| v.as_str());
+
+    if out.is_empty() && warnings.is_empty() && limit_notice.is_none() {
         return None;
     }
 
-    let mut text = String::from("Relevant memories from MenteDB (persistent memory):\n");
+    let mut text = String::new();
+    if let Some(notice) = limit_notice {
+        text.push_str(&format!(
+            "[MenteDB] {notice} Tell the user if they ask about memory.\n\n"
+        ));
+    }
+    text.push_str("Relevant memories from MenteDB (persistent memory):\n");
     text.push_str(&out);
     if !warnings.is_empty() {
         text.push_str(&warnings);

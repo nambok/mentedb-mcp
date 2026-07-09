@@ -80,12 +80,10 @@ impl MenteDbServer {
                     self.embedding_provider.as_ref(),
                 )
                 .await
-                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?
+                .map_err(|e| McpError::internal_error(friendly_extraction_error(&e), None))?
         } else {
-            let http_provider =
-                mentedb_extraction::HttpExtractionProvider::new(config).map_err(|e| {
-                    McpError::internal_error(format!("Provider init failed: {e}"), None)
-                })?;
+            let http_provider = mentedb_extraction::HttpExtractionProvider::new(config)
+                .map_err(|e| McpError::internal_error(friendly_extraction_error(&e), None))?;
             let pipeline = ExtractionPipeline::new(http_provider, ExtractionConfig::default());
             pipeline
                 .process(
@@ -94,7 +92,7 @@ impl MenteDbServer {
                     self.embedding_provider.as_ref(),
                 )
                 .await
-                .map_err(|e| McpError::internal_error(format!("Extraction failed: {e}"), None))?
+                .map_err(|e| McpError::internal_error(friendly_extraction_error(&e), None))?
         };
 
         let db = &*self.db;

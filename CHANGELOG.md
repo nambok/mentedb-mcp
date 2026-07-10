@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.21](https://github.com/nambok/mentedb-mcp/compare/v0.5.20...v0.5.21) - 2026-07-10
+
+### Fixed
+
+- translate raw LLM provider errors into clear actionable messages instead of leaking them to users ([#112](https://github.com/nambok/mentedb-mcp/pull/112))
+
 ## [0.5.20](https://github.com/nambok/mentedb-mcp/compare/v0.5.19...v0.5.20) - 2026-07-06
 
 ### Added

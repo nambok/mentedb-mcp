@@ -255,6 +255,31 @@ pub(crate) fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![Content::text(msg.to_string())]))
 }
 
+/// Translate a low level extraction error into a clear, actionable message
+/// instead of leaking a raw provider validation string (e.g. "prompt is
+/// required when stop is not true"). Enrichment degrades gracefully, so the
+/// message always reassures that stored memories are safe.
+pub(crate) fn friendly_extraction_error(e: &mentedb_extraction::ExtractionError) -> String {
+    use mentedb_extraction::ExtractionError as E;
+    let cause = match e {
+        E::AuthError(_) => {
+            "the LLM provider rejected the credentials (check llm_api_key or MENTEDB_LLM_API_KEY)"
+        }
+        E::ModelNotFound(_) => "the configured model was not found (check llm_model)",
+        E::ConfigError(_) => "the LLM provider is misconfigured (check llm_provider and llm_model)",
+        E::RateLimitExceeded { .. } => {
+            "the LLM provider is rate limiting (enrichment will retry later)"
+        }
+        E::ParseError(_) => "the LLM response could not be parsed",
+        E::EmbeddingError(_) => "the embedding provider failed",
+        E::ProviderError(_) | E::HttpError(_) => {
+            "the LLM provider rejected the request, usually a provider or model mismatch \
+             (check llm_provider and llm_model)"
+        }
+    };
+    format!("Memory enrichment is paused: {cause}. Your memories are still saved.")
+}
+
 /// Serialize a MemoryNode to a JSON value with all fields.
 pub(crate) fn memory_node_to_json(mem: &MemoryNode) -> serde_json::Value {
     let attrs: serde_json::Map<String, serde_json::Value> = mem

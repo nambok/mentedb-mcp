@@ -1,7 +1,7 @@
-# Keeps the MCP server on the latest mentedb engine release.
-# Dependabot PRs the bump (manifest + lockfile), CI gates it, and merging
-# lets release-plz fold it into the next mentedb-mcp release, which rebuilds
-# and republishes the npm/crates binaries against the new engine.
+# Keeps mentedb-mcp current. Cargo: the mentedb engine bump is its own group
+# (a new engine release rebuilds and republishes the npm/crates binaries), all
+# other minor/patch bumps are grouped, and majors come as individual PRs. Plus
+# GitHub Actions. CI gates each one; merging lets release-plz cut the release.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -14,6 +14,21 @@ updates:
       mentedb-engine:
         patterns:
           - "mentedb*"
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     labels:
       - dependencies
     open-pull-requests-limit: 5

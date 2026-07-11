@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.24](https://github.com/nambok/mentedb-mcp/compare/v0.5.23...v0.5.24) - 2026-07-11
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.5.23](https://github.com/nambok/mentedb-mcp/compare/v0.5.22...v0.5.23) - 2026-07-11
 
 ### Other

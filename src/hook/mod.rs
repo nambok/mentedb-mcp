@@ -67,6 +67,21 @@ struct SessionState {
     last_note: Option<String>,
 }
 
+/// Claude Code injects background task notifications, system reminders, and
+/// local command output as UserPromptSubmit events. They are not user turns, so
+/// storing them pollutes memory and the speculative cache with system noise.
+/// Remove those blocks; a prompt left empty was pure noise and the caller skips
+/// it. Real prompts that merely have a reminder appended keep their content.
+fn strip_system_blocks(prompt: &str) -> String {
+    static SYSTEM_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?s)<task-notification>.*?</task-notification>|<system-reminder>.*?</system-reminder>|<local-command-stdout>.*?</local-command-stdout>|<local-command-stderr>.*?</local-command-stderr>",
+        )
+        .expect("valid system-block regex")
+    });
+    SYSTEM_BLOCK.replace_all(prompt, "").trim().to_string()
+}
+
 fn state_path(data_dir: &Path, session_id: &str) -> PathBuf {
     let safe: String = session_id
         .chars()
@@ -125,6 +140,15 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 .unwrap_or("")
                 .trim()
                 .to_string();
+            if prompt.is_empty() {
+                return Ok(());
+            }
+            // Claude Code injects background task notifications, system
+            // reminders, and local command output as UserPromptSubmit events.
+            // They are not user turns, so storing them pollutes memory and the
+            // speculative cache with system noise. Strip those blocks, and if
+            // nothing real is left, skip the turn entirely.
+            let prompt = strip_system_blocks(&prompt);
             if prompt.is_empty() {
                 return Ok(());
             }
@@ -1019,5 +1043,24 @@ mod tests {
         assert!(text.contains("Works on trading systems"));
         assert!(text.contains("never commit secrets"));
         assert!(format_session_context(&json!({})).is_none());
+    }
+
+    #[test]
+    fn strips_system_noise_and_keeps_real_prompts() {
+        // A pure task notification collapses to empty, so the caller skips it.
+        assert_eq!(
+            strip_system_blocks(
+                "<task-notification>\n<task-id>abc</task-id>\ndone\n</task-notification>"
+            ),
+            ""
+        );
+        // A real prompt with an appended system reminder keeps the real text.
+        let mixed = "fix the login bug\n<system-reminder>be concise</system-reminder>";
+        assert_eq!(strip_system_blocks(mixed), "fix the login bug");
+        // An ordinary prompt passes through untouched.
+        assert_eq!(
+            strip_system_blocks("just a normal question"),
+            "just a normal question"
+        );
     }
 }

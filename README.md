@@ -4,7 +4,7 @@
 
 The MCP (Model Context Protocol) server for MenteDB, the mind database for AI agents.
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/mentedb-mcp)](https://crates.io/crates/mentedb-mcp) [![CI](https://github.com/nambok/mentedb-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/nambok/mentedb-mcp/actions/workflows/ci.yml) [![dependency status](https://deps.rs/repo/github/nambok/mentedb-mcp/status.svg)](https://deps.rs/repo/github/nambok/mentedb-mcp) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ## What is this?
 

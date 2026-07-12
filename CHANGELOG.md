@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.25](https://github.com/nambok/mentedb-mcp/compare/v0.5.24...v0.5.25) - 2026-07-11
+
+### Fixed
+
+- stop storing Claude Code system content as memories ([#124](https://github.com/nambok/mentedb-mcp/pull/124))
+
 ## [0.5.24](https://github.com/nambok/mentedb-mcp/compare/v0.5.23...v0.5.24) - 2026-07-11
 
 ### Other

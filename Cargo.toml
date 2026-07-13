@@ -37,7 +37,7 @@ mentedb-graph = { version = "0.10", optional = true }
 mentedb-cognitive = { version = "0.10", optional = true }
 mentedb-context = { version = "0.10", optional = true }
 mentedb-embedding = { version = "0.10", features = ["local"], optional = true }
-mentedb-extraction = { version = "0.10", optional = true }
+mentedb-extraction = { version = "0.11", optional = true }
 mentedb-consolidation = { version = "0.10", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 

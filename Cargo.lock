@@ -82,7 +82,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -93,7 +93,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -262,14 +262,15 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "candle-core"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd9895436c1ba5dc1037a19935d084b838db066ff4e15ef7dded020b7c12a4a"
+checksum = "5ecb245093b0f791b89d3420c3df9c6d49c60ab63ba54db896bf8a3baf486706"
 dependencies = [
  "byteorder",
  "float8",
  "gemm",
  "half",
+ "libc",
  "libm",
  "memmap2",
  "num-traits",
@@ -281,14 +282,15 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers 0.22.2",
  "yoke",
+ "zerocopy",
  "zip",
 ]
 
 [[package]]
 name = "candle-nn"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9317a09d6530b758990ed7f625ac69ff43653bc9ee28b0464644ad1169ada87"
+checksum = "eaa10b6ccc365b33210ce404fbf45e60d3e0bdac1004463cf1052e6ee1c1739a"
 dependencies = [
  "candle-core",
  "half",
@@ -302,9 +304,9 @@ dependencies = [
 
 [[package]]
 name = "candle-transformers"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f59d08c89e9f4af9c464e2f3a8e16199e7cc601e6f34538c2cfbb42b623b1783"
+checksum = "3bcbbf7ff00ff6fe2af22b93600195917fe90e90ff48424a140d1a926c44b1c1"
 dependencies = [
  "byteorder",
  "candle-core",
@@ -688,7 +690,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -770,7 +772,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -781,9 +783,9 @@ checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
 
 [[package]]
 name = "fancy-regex"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
+checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -1699,8 +1701,8 @@ dependencies = [
  "mentedb-cognitive",
  "mentedb-consolidation",
  "mentedb-context",
- "mentedb-core",
- "mentedb-embedding",
+ "mentedb-core 0.10.2",
+ "mentedb-embedding 0.10.2",
  "mentedb-extraction",
  "mentedb-graph",
  "mentedb-index",
@@ -1720,7 +1722,7 @@ checksum = "b971e283598b344a793f0aa02889be78b4b470db71aaf2367d16c31de6559674"
 dependencies = [
  "ahash",
  "crossbeam",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1736,7 +1738,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c16d9daad47b670570f14baba67144c5362cc501473500192f7bab88677c3bf"
 dependencies = [
  "ahash",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "serde",
  "tracing",
  "uuid",
@@ -1749,7 +1751,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3362b6cfea4413397a8620eeac9518a3e399662d0732982f155aecb2f42b4b64"
 dependencies = [
  "ahash",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1774,16 +1776,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "mentedb-core"
+version = "0.11.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3356068e07adfaef5606fce3eca533a4286c73d8ad69ea9e1c656b90e185cfe0"
+dependencies = [
+ "ahash",
+ "bytemuck",
+ "bytes",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "mentedb-embedding"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63d4f6473d034169fedbc68db3ff09e3bd3a53db87d11fefaea7f3831dfc6f44"
 dependencies = [
+ "mentedb-core 0.10.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mentedb-embedding"
+version = "0.11.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f99dff233cb2ecd6d09dc9678f715d804c734b9946f8ad8e0d1d749395a250d7"
+dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "hf-hub",
- "mentedb-core",
+ "mentedb-core 0.11.13",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1799,8 +1832,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "921f9991fa39443bb6ba829a135a29935c7122306ba781d1b5a32bce67a910bb"
 dependencies = [
  "mentedb-cognitive",
- "mentedb-core",
- "mentedb-embedding",
+ "mentedb-core 0.10.2",
+ "mentedb-embedding 0.10.2",
  "reqwest",
  "serde",
  "serde_json",
@@ -1819,7 +1852,7 @@ dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1836,7 +1869,7 @@ dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "parking_lot",
  "rand 0.9.2",
  "roaring",
@@ -1857,8 +1890,8 @@ dependencies = [
  "mentedb-cognitive",
  "mentedb-consolidation",
  "mentedb-context",
- "mentedb-core",
- "mentedb-embedding",
+ "mentedb-core 0.10.2",
+ "mentedb-embedding 0.11.13",
  "mentedb-extraction",
  "mentedb-graph",
  "open",
@@ -1883,7 +1916,7 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43487d8d10f4368b87318fd8143d3bb0f959e651224c2fcb2d30adca56f1bc55"
 dependencies = [
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1903,7 +1936,7 @@ dependencies = [
  "crossbeam",
  "fs2",
  "lz4_flex",
- "mentedb-core",
+ "mentedb-core 0.10.2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2000,7 +2033,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2326,7 +2359,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2652,7 +2685,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2705,13 +2738,15 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "safetensors"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "675656c1eabb620b921efea4f9199f97fc86e36dd6ffd1fbbe48d0f59a4987f5"
+checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
 dependencies = [
  "hashbrown 0.16.1",
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2935,7 +2970,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3067,7 +3102,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3764,7 +3799,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4213,9 +4248,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "7.2.0"
+version = "8.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c42e33efc22a0650c311c2ef19115ce232583abbe80850bc8b66509ebef02de0"
+checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
 dependencies = [
  "crc32fast",
  "indexmap",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.26](https://github.com/nambok/mentedb-mcp/compare/v0.5.25...v0.5.26) - 2026-07-14
+
+### Other
+
+- adopt engine 0.12 ([#131](https://github.com/nambok/mentedb-mcp/pull/131))
+
 ## [0.5.25](https://github.com/nambok/mentedb-mcp/compare/v0.5.24...v0.5.25) - 2026-07-11
 
 ### Fixed

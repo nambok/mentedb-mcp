@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.25](https://github.com/nambok/mentedb-mcp/compare/v0.5.24...v0.5.25) - 2026-07-11
+
+### Fixed
+
+- stop storing Claude Code system content as memories ([#124](https://github.com/nambok/mentedb-mcp/pull/124))
+
+## [0.5.24](https://github.com/nambok/mentedb-mcp/compare/v0.5.23...v0.5.24) - 2026-07-11
+
+### Other
+
+- update Cargo.lock dependencies
+
+## [0.5.23](https://github.com/nambok/mentedb-mcp/compare/v0.5.22...v0.5.23) - 2026-07-11
+
+### Other
+
+- *(deps)* bump the github-actions group with 4 updates ([#117](https://github.com/nambok/mentedb-mcp/pull/117))
+- *(deps)* bump openssl-src from 300.6.0+3.6.2 to 300.6.1+3.6.3 ([#120](https://github.com/nambok/mentedb-mcp/pull/120))
+- *(deps)* bump quinn-udp from 0.5.14 to 0.5.15 ([#121](https://github.com/nambok/mentedb-mcp/pull/121))
+- Dependabot parity (add github-actions, group cargo) + deps.rs badge ([#115](https://github.com/nambok/mentedb-mcp/pull/115))
+
 ## [0.5.22](https://github.com/nambok/mentedb-mcp/compare/v0.5.21...v0.5.22) - 2026-07-11
 
 ### Other

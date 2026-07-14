@@ -28,7 +28,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             runner: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -90,7 +90,7 @@ jobs:
           copy target\${{ matrix.target }}\release\mentedb-mcp.exe staging\
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.platform }}
           path: staging/
@@ -100,9 +100,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: lts/*
           registry-url: https://registry.npmjs.org
@@ -111,31 +111,31 @@ jobs:
         run: node scripts/sync-npm-version.js
 
       - name: Download darwin-arm64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-darwin-arm64
           path: npm/darwin-arm64/bin/
 
       - name: Download darwin-x64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-darwin-x64
           path: npm/darwin-x64/bin/
 
       - name: Download linux-arm64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-linux-arm64
           path: npm/linux-arm64/bin/
 
       - name: Download linux-x64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-linux-x64
           path: npm/linux-x64/bin/
 
       - name: Download win32-x64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-win32-x64
           path: npm/win32-x64/bin/

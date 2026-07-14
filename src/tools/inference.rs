@@ -231,6 +231,24 @@ impl MenteDbServer {
                         "reason": reason,
                     }));
                 }
+                mentedb_cognitive::InferredAction::DeduplicateExact { duplicate, keeper } => {
+                    // A byte-identical copy exists: invalidate the duplicate and
+                    // keep the canonical memory.
+                    if let Some(mut mem) = existing.iter().find(|m| m.id == *duplicate).cloned() {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_micros() as u64)
+                            .unwrap_or(0);
+                        mem.valid_until = Some(now);
+                        let _ = db.store(mem);
+                        applied += 1;
+                    }
+                    items.push(json!({
+                        "action": "deduplicate_exact",
+                        "duplicate": duplicate.to_string(),
+                        "keeper": keeper.to_string(),
+                    }));
+                }
             }
         }
 

@@ -221,6 +221,7 @@ async fn injection_context(
         embedding: &embedding,
         query_text: Some(&req.query),
         session_id: req.session_id.as_deref(),
+        agent_id: None,
         exclude_ids: &exclude,
         max_items: req.max_items.unwrap_or(6).min(20),
         max_episodic: req.max_episodic.unwrap_or(2).min(10),

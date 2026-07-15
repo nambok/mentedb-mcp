@@ -121,6 +121,11 @@ enum Commands {
     Login,
     /// Remove cloud credentials
     Logout,
+    /// Manage named MenteDB accounts (add, list, use, remove)
+    Accounts {
+        #[command(subcommand)]
+        command: AccountsCommand,
+    },
     /// Check cloud connection status
     Status,
     /// Diagnose the full memory pipeline (credentials, hooks, capture, spool)
@@ -137,6 +142,33 @@ enum Commands {
     /// Run the local hook daemon (owns the embedded database)
     #[cfg(feature = "local")]
     Daemon,
+}
+
+#[derive(Subcommand)]
+enum AccountsCommand {
+    /// Register a named account with an mdb_ API key (prompts if --key omitted)
+    Add {
+        /// Account name, e.g. "work" or "personal"
+        name: String,
+        /// The mdb_ API key. If omitted, you are prompted (key is not echoed).
+        #[arg(long)]
+        key: Option<String>,
+        /// Optional per-account cloud API URL override
+        #[arg(long)]
+        cloud_url: Option<String>,
+    },
+    /// List accounts, showing which is active (keys are masked)
+    List,
+    /// Set the active account (all cloud operations use its key)
+    Use {
+        /// Account name to activate
+        name: String,
+    },
+    /// Remove a named account
+    Remove {
+        /// Account name to remove
+        name: String,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -157,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Update { client }) => return run_setup(client, true),
         Some(Commands::Login) => return run_login().await,
         Some(Commands::Logout) => return run_logout(),
+        Some(Commands::Accounts { command }) => return run_accounts(command).await,
         Some(Commands::Status) => return run_status().await,
         Some(Commands::Doctor) => {
             let data_dir = resolve_data_dir(&cli.data_dir);
@@ -595,26 +628,230 @@ async fn run_login() -> anyhow::Result<()> {
         }
     };
 
-    // Save to ~/.mentedb/cloud.json
-    let home = home_dir().unwrap_or_else(|| "~".to_string());
-    let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
-    std::fs::create_dir_all(&mentedb_dir)?;
+    // Save to ~/.mentedb/cloud.json, merging into the multi-account config.
+    // `login` targets the active account (or "default" when none is set), so
+    // it keeps behaving like a single-account login while `accounts add`
+    // manages the rest.
+    let dir = mentedb_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.mentedb"));
+    std::fs::create_dir_all(&dir)?;
 
-    let cloud_config = serde_json::json!({
-        "api_url": std::env::var("MENTEDB_API_URL")
-            .unwrap_or_else(|_| "https://api.mentedb.com".to_string()),
-        "token": token,
-    });
-
-    let config_path = mentedb_dir.join("cloud.json");
-    write_secret_file(&config_path, &serde_json::to_string_pretty(&cloud_config)?)?;
+    let target = {
+        let config = config::load_accounts(&dir)?;
+        config
+            .active_name()
+            .unwrap_or_else(|| config::DEFAULT_ACCOUNT.to_string())
+    };
+    let cloud_url = std::env::var("MENTEDB_API_URL").ok();
+    let config_path = upsert_account(&dir, &target, &token, cloud_url, true)?;
 
     server_handle.abort();
 
     println!("  Authenticated successfully!");
+    println!("  Account: {target}");
     println!("  Credentials saved to: {}", config_path.display());
     println!("\n  Your MCP server will now sync with MenteDB Cloud.");
 
+    Ok(())
+}
+
+/// Insert or update a named account in `<dir>/cloud.json`, writing the file
+/// with 0600 permissions. When `make_active` is set (or no account is active
+/// yet) the account is also made active. Returns the credentials file path.
+fn upsert_account(
+    dir: &std::path::Path,
+    name: &str,
+    api_key: &str,
+    cloud_url: Option<String>,
+    make_active: bool,
+) -> anyhow::Result<std::path::PathBuf> {
+    let mut config = config::load_accounts(dir)?;
+    let entry = config.accounts.entry(name.to_string()).or_default();
+    entry.api_key = api_key.to_string();
+    // Only overwrite the stored URL when a new one was supplied, so re-running
+    // login does not clobber an account's pinned cloud_url.
+    if cloud_url.is_some() {
+        entry.cloud_url = cloud_url;
+    }
+    if make_active || config.active_account.is_none() {
+        config.active_account = Some(name.to_string());
+    }
+
+    let config_path = config::credentials_path(dir);
+    write_secret_file(&config_path, &config.to_json_string()?)?;
+    Ok(config_path)
+}
+
+/// Persist a fetched email onto an account, best-effort (never fails status).
+fn cache_account_email(dir: &std::path::Path, name: &str, email: &str) {
+    let Ok(mut config) = config::load_accounts(dir) else {
+        return;
+    };
+    if let Some(account) = config.accounts.get_mut(name) {
+        if account.email.as_deref() == Some(email) {
+            return; // Unchanged: avoid a needless write.
+        }
+        account.email = Some(email.to_string());
+        if let Ok(body) = config.to_json_string() {
+            write_secret_file(&config::credentials_path(dir), &body).ok();
+        }
+    }
+}
+
+/// Remove an account and, if it was active, clear the active pointer.
+/// Best-effort: used to drop a revoked account during `status`.
+fn remove_account_silent(dir: &std::path::Path, name: &str) {
+    let Ok(mut config) = config::load_accounts(dir) else {
+        return;
+    };
+    if config.accounts.remove(name).is_some() {
+        if config.active_account.as_deref() == Some(name) {
+            config.active_account = None;
+        }
+        if let Ok(body) = config.to_json_string() {
+            write_secret_file(&config::credentials_path(dir), &body).ok();
+        }
+    }
+}
+
+/// Dispatch `mentedb-mcp accounts <subcommand>`.
+async fn run_accounts(cmd: AccountsCommand) -> anyhow::Result<()> {
+    let dir = mentedb_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.mentedb"));
+    match cmd {
+        AccountsCommand::Add {
+            name,
+            key,
+            cloud_url,
+        } => run_accounts_add(&dir, &name, key, cloud_url).await,
+        AccountsCommand::List => run_accounts_list(&dir),
+        AccountsCommand::Use { name } => run_accounts_use(&dir, &name),
+        AccountsCommand::Remove { name } => run_accounts_remove(&dir, &name),
+    }
+}
+
+/// Register (or update) a named account with an `mdb_` API key.
+async fn run_accounts_add(
+    dir: &std::path::Path,
+    name: &str,
+    key: Option<String>,
+    cloud_url: Option<String>,
+) -> anyhow::Result<()> {
+    if name.trim().is_empty() {
+        anyhow::bail!("Account name cannot be empty.");
+    }
+
+    // Take the key from the flag, else prompt. Never echo it back.
+    let key = match key {
+        Some(k) => k.trim().to_string(),
+        None => {
+            print!("  Paste the mdb_ API key for account '{name}': ");
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            line.trim().to_string()
+        }
+    };
+
+    if key.is_empty() {
+        anyhow::bail!("No API key provided.");
+    }
+    if !key.starts_with("mdb_") {
+        // A warning, not an error: keys are opaque and the prefix may change.
+        eprintln!("  [warn] key does not start with 'mdb_'; storing it anyway.");
+    }
+
+    std::fs::create_dir_all(dir)?;
+    let existed = config::load_accounts(dir)?.accounts.contains_key(name);
+    let config_path = upsert_account(dir, name, &key, cloud_url, false)?;
+
+    let verb = if existed { "Updated" } else { "Added" };
+    println!("  {verb} account '{name}' ({}).", config::mask_secret(&key));
+    // Report whether this became the active account.
+    let active = config::load_accounts(dir)?.active_name();
+    if active.as_deref() == Some(name) {
+        println!("  Active account is now '{name}'.");
+    } else if let Some(active) = active {
+        println!(
+            "  Active account remains '{active}'. Switch with `mentedb-mcp accounts use {name}`."
+        );
+    }
+    println!("  Saved to: {}", config_path.display());
+    Ok(())
+}
+
+/// List every account, marking the active one and masking keys.
+fn run_accounts_list(dir: &std::path::Path) -> anyhow::Result<()> {
+    let config = config::load_accounts(dir)?;
+    if config.accounts.is_empty() {
+        println!("  No accounts configured.");
+        println!("  Add one with `mentedb-mcp accounts add <name>` or `mentedb-mcp login`.");
+        return Ok(());
+    }
+
+    let active = config.active_name();
+    println!("  Accounts:");
+    for (name, account) in &config.accounts {
+        let marker = if active.as_deref() == Some(name.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        let email = account.email.as_deref().unwrap_or("-");
+        let url = account
+            .cloud_url
+            .as_deref()
+            .unwrap_or(config::DEFAULT_CLOUD_URL);
+        println!(
+            "  {marker} {name}  key={}  email={email}  url={url}",
+            config::mask_secret(&account.api_key)
+        );
+    }
+    println!("\n  (* = active)");
+    Ok(())
+}
+
+/// Set the active account.
+fn run_accounts_use(dir: &std::path::Path, name: &str) -> anyhow::Result<()> {
+    let mut config = config::load_accounts(dir)?;
+    if !config.accounts.contains_key(name) {
+        anyhow::bail!(
+            "No account named '{name}'. Run `mentedb-mcp accounts list` to see configured accounts."
+        );
+    }
+    config.active_account = Some(name.to_string());
+    std::fs::create_dir_all(dir)?;
+    write_secret_file(&config::credentials_path(dir), &config.to_json_string()?)?;
+    println!("  Active account is now '{name}'.");
+    Ok(())
+}
+
+/// Remove an account. Clears the active pointer if it named the removed one.
+fn run_accounts_remove(dir: &std::path::Path, name: &str) -> anyhow::Result<()> {
+    let mut config = config::load_accounts(dir)?;
+    if config.accounts.remove(name).is_none() {
+        anyhow::bail!(
+            "No account named '{name}'. Run `mentedb-mcp accounts list` to see configured accounts."
+        );
+    }
+    let was_active = config.active_account.as_deref() == Some(name);
+    if was_active {
+        config.active_account = None;
+    }
+    std::fs::create_dir_all(dir)?;
+    write_secret_file(&config::credentials_path(dir), &config.to_json_string()?)?;
+
+    println!("  Removed account '{name}'.");
+    if was_active {
+        if let Some(next) = config.active_name() {
+            // A single remaining account is resolved implicitly; make that
+            // explicit so later commands are unambiguous.
+            config.active_account = Some(next.clone());
+            write_secret_file(&config::credentials_path(dir), &config.to_json_string()?)?;
+            println!("  Active account is now '{next}'.");
+        } else if !config.accounts.is_empty() {
+            println!("  No active account set. Choose one with `mentedb-mcp accounts use <name>`.");
+        }
+    }
     Ok(())
 }
 
@@ -633,9 +870,8 @@ fn run_logout() -> anyhow::Result<()> {
 }
 
 async fn run_status() -> anyhow::Result<()> {
-    let home = home_dir().unwrap_or_else(|| "~".to_string());
-    let mentedb_dir = std::path::PathBuf::from(&home).join(".mentedb");
-    let config_path = mentedb_dir.join("cloud.json");
+    let dir = mentedb_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.mentedb"));
+    let config_path = config::credentials_path(&dir);
 
     if !config_path.exists() {
         println!("  Status: Not logged in");
@@ -643,20 +879,33 @@ async fn run_status() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let config_str = std::fs::read_to_string(&config_path)?;
-    let config: serde_json::Value = serde_json::from_str(&config_str)?;
+    let config = config::load_accounts(&dir)?;
+    let Some((active_name, account)) = config.active_account() else {
+        if config.accounts.is_empty() {
+            println!("  Status: Not logged in");
+            println!("  Run `mentedb-mcp login` to authenticate.");
+        } else {
+            println!("  Status: No active account");
+            println!("  Run `mentedb-mcp accounts use <name>` to select one.");
+        }
+        return Ok(());
+    };
+    let active_name = active_name.to_string();
 
-    let api_url = config["api_url"]
-        .as_str()
-        .unwrap_or("https://api.mentedb.com");
-    let token = config["token"].as_str().unwrap_or("");
-
+    let token = account.api_key.clone();
     if token.is_empty() {
-        println!("  Status: Invalid credentials (empty token)");
+        println!("  Status: Invalid credentials (empty key)");
         println!("  Run `mentedb-mcp login` to re-authenticate.");
         return Ok(());
     }
+    // MENTEDB_API_URL overrides the account's pinned URL, matching how
+    // credentials are loaded for actual requests.
+    let api_url = std::env::var("MENTEDB_API_URL")
+        .ok()
+        .or_else(|| account.cloud_url.clone())
+        .unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
 
+    println!("  Active account: {active_name}");
     println!("  Checking cloud connection...");
 
     let client = reqwest::Client::new();
@@ -672,7 +921,7 @@ async fn run_status() -> anyhow::Result<()> {
             200 => {
                 println!("  Status: Connected");
                 println!("  Cloud URL: {api_url}");
-                println!("  Token: {}", mask_token(token));
+                println!("  Key: {}", config::mask_secret(&token));
 
                 // Fetch account info
                 match client
@@ -685,7 +934,10 @@ async fn run_status() -> anyhow::Result<()> {
                     Ok(me_resp) if me_resp.status().is_success() => {
                         if let Ok(me) = me_resp.json::<serde_json::Value>().await {
                             if let Some(email) = me.get("email").and_then(|v| v.as_str()) {
-                                println!("  Account: {email}");
+                                println!("  Email: {email}");
+                                // Cache the email on the account for offline
+                                // `accounts list` display.
+                                cache_account_email(&dir, &active_name, email);
                             }
                             if let Some(plan) = me.get("plan").and_then(|v| v.as_str()) {
                                 println!("  Plan: {plan}");
@@ -700,8 +952,8 @@ async fn run_status() -> anyhow::Result<()> {
                 println!();
                 println!("  Your session has been revoked (possibly from the web dashboard).");
                 println!("  Run `mentedb-mcp login` to create a new session.");
-                // Remove stale credentials
-                std::fs::remove_file(&config_path).ok();
+                // Remove only the stale account, preserving the others.
+                remove_account_silent(&dir, &active_name);
             }
             code => {
                 println!("  Status: Error (HTTP {code})");
@@ -722,39 +974,32 @@ async fn run_status() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load cloud credentials from ~/.mentedb/cloud.json.
-/// Returns (api_url, token) if valid credentials exist.
-/// Also checks the MENTEDB_API_URL env var as an override for the API URL.
-fn load_cloud_credentials() -> Option<(String, String)> {
-    let home = home_dir()?;
-    let config_path = std::path::PathBuf::from(&home)
-        .join(".mentedb")
-        .join("cloud.json");
-    if !config_path.exists() {
-        return None;
-    }
-
-    let config_str = std::fs::read_to_string(&config_path).ok()?;
-    let config: serde_json::Value = serde_json::from_str(&config_str).ok()?;
-
-    let token = config["token"].as_str().unwrap_or_default();
-    if token.is_empty() {
-        return None;
-    }
-
-    // MENTEDB_API_URL env var takes precedence over stored api_url
-    let api_url = std::env::var("MENTEDB_API_URL")
-        .ok()
-        .or_else(|| config["api_url"].as_str().map(String::from))
-        .unwrap_or_else(|| "https://api.mentedb.com".to_string());
-
-    Some((api_url, token.to_string()))
+/// Directory holding MenteDB credentials and state (`~/.mentedb`).
+fn mentedb_dir() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(home_dir()?).join(".mentedb"))
 }
 
-/// Mask a token for display without ever panicking on short values.
-fn mask_token(token: &str) -> String {
-    let prefix: String = token.chars().take(12).collect();
-    format!("{prefix}...")
+/// Load cloud credentials for the ACTIVE account from ~/.mentedb/cloud.json.
+/// Returns (api_url, token) if a valid active account exists.
+///
+/// The legacy single-key shape is migrated on read (see
+/// `config::AccountsConfig`), so pre-existing single-key installs keep working.
+/// Also checks the MENTEDB_API_URL env var as an override for the API URL.
+fn load_cloud_credentials() -> Option<(String, String)> {
+    let dir = mentedb_dir()?;
+    let config = config::load_accounts(&dir).ok()?;
+    let (_, account) = config.active_account()?;
+    if account.api_key.is_empty() {
+        return None;
+    }
+
+    // MENTEDB_API_URL env var takes precedence over the account's cloud_url.
+    let api_url = std::env::var("MENTEDB_API_URL")
+        .ok()
+        .or_else(|| account.cloud_url.clone())
+        .unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
+
+    Some((api_url, account.api_key.clone()))
 }
 
 /// Write a credentials file created with 0600 from the first byte, instead
@@ -794,7 +1039,7 @@ async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
         Some((api_url, token)) => {
             println!(
                 "  [ok]   Cloud credentials: {} ({})",
-                mask_token(token),
+                config::mask_secret(token),
                 api_url
             );
             let client = reqwest::Client::new();

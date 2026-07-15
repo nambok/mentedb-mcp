@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.27](https://github.com/nambok/mentedb-mcp/compare/v0.5.26...v0.5.27) - 2026-07-15
+
+### Added
+
+- named-account switching (multiple mdb_ keys, never mixed) ([#134](https://github.com/nambok/mentedb-mcp/pull/134))
+
 ## [0.5.26](https://github.com/nambok/mentedb-mcp/compare/v0.5.25...v0.5.26) - 2026-07-14
 
 ### Other

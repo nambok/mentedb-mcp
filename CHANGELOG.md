@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.28](https://github.com/nambok/mentedb-mcp/compare/v0.5.27...v0.5.28) - 2026-07-16
+
+### Fixed
+
+- bound the Stop hook so a turn never stalls on the network ([#138](https://github.com/nambok/mentedb-mcp/pull/138))
+
 ## [0.5.27](https://github.com/nambok/mentedb-mcp/compare/v0.5.26...v0.5.27) - 2026-07-15
 
 ### Added

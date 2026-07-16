@@ -266,24 +266,36 @@ fn hook_full_turn_loop_with_autospawn() {
         "fresh same-session turns are echo and must not be injected, got: {out}"
     );
 
-    // The turn is nonetheless stored and retrievable: ask the daemon
-    // directly, below the injection policy.
+    // The turn is stored asynchronously now: the Stop hook spools it and a
+    // detached flusher sends it to the daemon, so the turn end never blocks on
+    // the write. Poll until it is retrievable (eventual consistency), below the
+    // injection policy.
     let info = wait_for_daemon(dir.path(), Duration::from_secs(30));
-    let (code, body) = daemon_post(
-        &info,
-        "/v1/context",
-        &serde_json::json!({ "prompt": "what is my project codename", "limit": 8 }),
-    );
-    assert_eq!(code, 200);
-    let recalled: serde_json::Value = serde_json::from_str(&body).unwrap();
-    let memories = recalled["memories"].as_array().cloned().unwrap_or_default();
+    let mut recalled = serde_json::Value::Null;
+    let mut found = false;
+    for _ in 0..40 {
+        let (code, body) = daemon_post(
+            &info,
+            "/v1/context",
+            &serde_json::json!({ "prompt": "what is my project codename", "limit": 8 }),
+        );
+        if code == 200 {
+            recalled = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let memories = recalled["memories"].as_array().cloned().unwrap_or_default();
+            if memories.iter().any(|m| {
+                m["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("nightjar"))
+            }) {
+                found = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
     assert!(
-        memories.iter().any(|m| {
-            m["content"]
-                .as_str()
-                .is_some_and(|c| c.contains("nightjar"))
-        }),
-        "stored turn must be retrievable from the daemon, got: {recalled}"
+        found,
+        "stored turn must eventually be retrievable from the daemon, last: {recalled}"
     );
 
     drop(guard);

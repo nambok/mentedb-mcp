@@ -275,39 +275,37 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             let outcome_ids = std::mem::take(&mut state.last_injected);
             save_state(data_dir, &session_id, &state);
 
-            let store = async {
-                let backend = Backend::resolve(data_dir, force_local).await?;
-                flush_spool(data_dir, &backend).await;
-                // Attention learns: report which injected memories this
-                // reply actually drew on before storing the turn.
-                backend
-                    .record_injection_outcome(&outcome_ids, &assistant)
-                    .await;
-                backend
-                    .store_turn(
-                        &user_message,
-                        &assistant,
-                        turn_id,
-                        project.clone(),
-                        &session_id,
-                    )
-                    .await
-            }
-            .await;
-            record_auth_state(data_dir, store.as_ref().err());
-            if let Err(e) = store {
-                tracing::warn!(error = %e, "store_turn failed, spooling for retry");
+            // Spool the turn (and attention outcome) first so they are durable
+            // regardless of the network, then flush synchronously. Each send is
+            // bounded by a tight per-send timeout inside flush_spool, so the turn
+            // end can never stall on a slow or unreachable Cloud (previously up to
+            // the 30s client timeout, worse when flaky). Anything that does not
+            // send in time stays spooled and the next hook flushes it, so nothing
+            // is lost.
+            spool::push(
+                data_dir,
+                &json!({
+                    "kind": "turn",
+                    "user_message": user_message,
+                    "assistant_response": assistant.clone(),
+                    "turn_id": turn_id,
+                    "project": project,
+                    "session_id": session_id,
+                }),
+            );
+            if !outcome_ids.is_empty() {
                 spool::push(
                     data_dir,
                     &json!({
-                        "kind": "turn",
-                        "user_message": user_message,
-                        "assistant_response": assistant,
-                        "turn_id": turn_id,
-                        "project": project,
-                        "session_id": session_id,
+                        "kind": "injection_outcome",
+                        "shown_ids": outcome_ids,
+                        "assistant_text": assistant,
                     }),
                 );
+            }
+            if let Ok(backend) = Backend::resolve(data_dir, force_local).await {
+                flush_spool(data_dir, &backend).await;
+                record_auth_state(data_dir, None);
             }
         }
         HookEvent::SessionStart => {
@@ -442,8 +440,9 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                 if user.is_empty() {
                     true // malformed, drop
                 } else {
-                    backend
-                        .store_turn(
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        backend.store_turn(
                             user,
                             e.get("assistant_response")
                                 .and_then(|v| v.as_str())
@@ -453,9 +452,11 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                                 .and_then(|v| v.as_str())
                                 .map(str::to_string),
                             e.get("session_id").and_then(|v| v.as_str()).unwrap_or(""),
-                        )
-                        .await
-                        .is_ok()
+                        ),
+                    )
+                    .await
+                    .map(|r| r.is_ok())
+                    .unwrap_or(false)
                 }
             }
             Some("note") => {
@@ -463,16 +464,42 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                 if content.is_empty() {
                     true
                 } else {
-                    backend
-                        .store_note(
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        backend.store_note(
                             content,
                             e.get("project")
                                 .and_then(|v| v.as_str())
                                 .map(str::to_string),
-                        )
-                        .await
-                        .is_ok()
+                        ),
+                    )
+                    .await
+                    .map(|r| r.is_ok())
+                    .unwrap_or(false)
                 }
+            }
+            Some("injection_outcome") => {
+                let shown: Vec<String> = e
+                    .get("shown_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let text = e
+                    .get("assistant_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                // Best effort attention signal; bounded so it never blocks the
+                // queue, and always dropped (it is non-critical, never requeued).
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    backend.record_injection_outcome(&shown, text),
+                )
+                .await;
+                true
             }
             _ => true,
         };

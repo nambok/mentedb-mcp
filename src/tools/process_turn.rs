@@ -112,6 +112,9 @@ impl MenteDbServer {
             turn_id: req.turn_id,
             project_context: req.project_context.clone(),
             agent_id: Some(agent_id),
+            // Local single-user connector: nil/shared user owner (no per-user
+            // isolation; that axis is a cloud/multi-tenant concern).
+            user_id: None,
             session_id: req.session_id.clone(),
         };
 

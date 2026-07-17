@@ -31,14 +31,14 @@ open = "5"
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 
 # Local mode dependencies (heavy - embedded DB, embeddings, LLM extraction)
-mentedb = { version = "0.12", features = ["enrichment"], optional = true }
-mentedb-core = { version = "0.12", optional = true }
-mentedb-graph = { version = "0.12", optional = true }
-mentedb-cognitive = { version = "0.12", optional = true }
-mentedb-context = { version = "0.12", optional = true }
-mentedb-embedding = { version = "0.12", features = ["local"], optional = true }
-mentedb-extraction = { version = "0.12", optional = true }
-mentedb-consolidation = { version = "0.12", optional = true }
+mentedb = { version = "0.15", features = ["enrichment"], optional = true }
+mentedb-core = { version = "0.15", optional = true }
+mentedb-graph = { version = "0.15", optional = true }
+mentedb-cognitive = { version = "0.15", optional = true }
+mentedb-context = { version = "0.15", optional = true }
+mentedb-embedding = { version = "0.15", features = ["local"], optional = true }
+mentedb-extraction = { version = "0.15", optional = true }
+mentedb-consolidation = { version = "0.15", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]

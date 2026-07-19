@@ -423,17 +423,30 @@ fn auth_notice(data_dir: &Path) -> Option<String> {
 /// still fail (and everything after the first failure, to preserve order) go
 /// back into the spool.
 async fn flush_spool(data_dir: &Path, backend: &Backend) {
+    // The flush is bounded so a backlog never dominates a hook: at most
+    // MAX_FLUSH_PER_CALL entries and at most FLUSH_BUDGET of wall-clock per
+    // invocation. Whatever is not reached stays spooled for the next hook, so a
+    // large backlog drains over several hooks instead of blocking one prompt for
+    // tens of seconds (each store is a full round trip; N of them was the hang).
+    const MAX_FLUSH_PER_CALL: usize = 25;
+    const FLUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
+
     let entries = spool::take_all(data_dir);
     if entries.is_empty() {
         return;
     }
+    let start = std::time::Instant::now();
+    let mut processed = 0usize;
     let mut failed: Vec<serde_json::Value> = Vec::new();
     let mut hit_failure = false;
     for e in entries {
-        if hit_failure {
+        // Stop making network calls once we fail, reach the item cap, or exceed
+        // the time budget; everything remaining is requeued in order.
+        if hit_failure || processed >= MAX_FLUSH_PER_CALL || start.elapsed() >= FLUSH_BUDGET {
             failed.push(e);
             continue;
         }
+        processed += 1;
         let ok = match e.get("kind").and_then(|v| v.as_str()) {
             Some("turn") => {
                 let user = e.get("user_message").and_then(|v| v.as_str()).unwrap_or("");

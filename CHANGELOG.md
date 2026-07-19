@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.29](https://github.com/nambok/mentedb-mcp/compare/v0.5.28...v0.5.29) - 2026-07-19
+
+### Fixed
+
+- *(hook)* bound the spool flush so a backlog cannot block a prompt ([#146](https://github.com/nambok/mentedb-mcp/pull/146))
+- bump embedded engine 0.12 to 0.15.1 ([#143](https://github.com/nambok/mentedb-mcp/pull/143))
+
+### Other
+
+- run npm publish workflow on Node 24 ([#145](https://github.com/nambok/mentedb-mcp/pull/145))
+
 ## [0.5.28](https://github.com/nambok/mentedb-mcp/compare/v0.5.27...v0.5.28) - 2026-07-16
 
 ### Fixed

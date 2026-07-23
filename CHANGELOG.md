@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.30](https://github.com/nambok/mentedb-mcp/compare/v0.5.29...v0.5.30) - 2026-07-23
+
+### Added
+
+- *(hook)* warn in-session when the write spool backs up ([#149](https://github.com/nambok/mentedb-mcp/pull/149))
+
 ## [0.5.29](https://github.com/nambok/mentedb-mcp/compare/v0.5.28...v0.5.29) - 2026-07-19
 
 ### Fixed

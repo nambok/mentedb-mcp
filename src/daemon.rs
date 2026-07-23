@@ -228,6 +228,9 @@ async fn injection_context(
         exclude_ids: &exclude,
         max_items: req.max_items.unwrap_or(6).min(20),
         max_episodic: req.max_episodic.unwrap_or(2).min(10),
+        // The injection request carries no project context, recall across all
+        // projects.
+        current_project: None,
     };
     let selected = db.recall_for_injection(&query).map_err(|e| {
         tracing::error!(error = %e, "injection recall failed");

@@ -22,7 +22,7 @@ impl MenteDbServer {
         let embedding = self.embedding_provider.embed(prompt).unwrap_or_default();
 
         let hits = db
-            .recall_hybrid_at(&embedding, Some(prompt), k, now_us(), None, None)
+            .recall_hybrid_at(&embedding, Some(prompt), k, now_us(), None, None, None)
             .unwrap_or_default();
         let mut memories = resolve_memory_ids(db, &hits);
 

@@ -61,10 +61,12 @@ struct SessionState {
     /// reporting when the turn's reply arrives at Stop.
     #[serde(default)]
     last_injected: Vec<String>,
-    /// Last stored action note, to collapse consecutive duplicates
-    /// (iterating on one file should not produce N identical memories).
+    /// Hashes of recently stored action notes, newest last, to collapse
+    /// repeats (iterating on one file should not produce N identical
+    /// memories). A window rather than only the previous note, because work
+    /// ping-pongs: edit A, run tests, edit A again.
     #[serde(default)]
-    last_note: Option<String>,
+    recent_note_hashes: Vec<u64>,
 }
 
 /// Claude Code injects background task notifications, system reminders, and
@@ -272,7 +274,14 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             // skips periodic maintenance for it.
             state.turn_id += 1;
             let turn_id = state.turn_id;
-            state.last_user_message = Some(user_message.chars().take(600).collect());
+            // Short acknowledgements are not worth a turn memory, and they
+            // also stay out of last_user_message: blending "ok" into the next
+            // recall query would ground it in nothing.
+            let store_turn = worth_storing_turn(&user_message);
+            if store_turn {
+                state.last_user_message = Some(user_message.chars().take(600).collect());
+            }
+            let outcome_ids = std::mem::take(&mut state.last_injected);
             save_state(data_dir, &session_id, &state);
 
             let project = payload
@@ -282,9 +291,6 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
 
-            let outcome_ids = std::mem::take(&mut state.last_injected);
-            save_state(data_dir, &session_id, &state);
-
             // Spool the turn (and attention outcome) first so they are durable
             // regardless of the network, then flush synchronously. Each send is
             // bounded by a tight per-send timeout inside flush_spool, so the turn
@@ -292,17 +298,19 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             // the 30s client timeout, worse when flaky). Anything that does not
             // send in time stays spooled and the next hook flushes it, so nothing
             // is lost.
-            spool::push(
-                data_dir,
-                &json!({
-                    "kind": "turn",
-                    "user_message": user_message,
-                    "assistant_response": assistant.clone(),
-                    "turn_id": turn_id,
-                    "project": project,
-                    "session_id": session_id,
-                }),
-            );
+            if store_turn {
+                spool::push(
+                    data_dir,
+                    &json!({
+                        "kind": "turn",
+                        "user_message": user_message,
+                        "assistant_response": assistant.clone(),
+                        "turn_id": turn_id,
+                        "project": project,
+                        "session_id": session_id,
+                    }),
+                );
+            }
             if !outcome_ids.is_empty() {
                 spool::push(
                     data_dir,
@@ -355,13 +363,12 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             };
             let note = redact(&note);
 
-            // Iterating on one file fires this hook repeatedly with the
-            // identical note; one memory carries all the information.
+            // Iterating on a handful of files fires this hook repeatedly with
+            // the same few notes; one memory each carries all the information.
             let mut state = load_state(data_dir, &session_id);
-            if state.last_note.as_deref() == Some(note.as_str()) {
+            if note_seen_recently(&mut state.recent_note_hashes, &note) {
                 return Ok(());
             }
-            state.last_note = Some(note.clone());
             save_state(data_dir, &session_id, &state);
 
             let project = payload
@@ -429,14 +436,17 @@ fn auth_notice(data_dir: &Path) -> Option<String> {
     })
 }
 
+/// Spool depth at which the backlog is a real outage rather than a transient
+/// blip. A retry or two is normal and self-heals within a prompt, so warning
+/// (and failing `status`) below this would cry wolf. Shared with the `status`
+/// command so its exit code and the in-session warning agree.
+pub(crate) const SPOOL_WARN_THRESHOLD: usize = 10;
+
 /// When the local write spool has backed up past a small threshold, the cloud
 /// is not accepting writes and recent turns are not being remembered. Surface
 /// that in the session so a sync outage never stays silent for hours; the hook
 /// keeps retrying on its own and the notice clears once the backlog drains.
 fn spool_notice(data_dir: &Path) -> Option<String> {
-    // A retry or two is normal and self-heals within a prompt, so only warn once
-    // a real backlog has formed and this never cries wolf on a transient blip.
-    const SPOOL_WARN_THRESHOLD: usize = 10;
     let queued = spool::depth(data_dir);
     (queued >= SPOOL_WARN_THRESHOLD).then(|| {
         format!(
@@ -591,6 +601,61 @@ const READ_ONLY_BASH: &[&str] = &[
     "du",
 ];
 
+/// Bash command prefixes that mutate state but carry no durable signal:
+/// formatting, linting, and build invocations fire constantly while iterating
+/// and describe the toolchain, not the work. Pure git state reads are already
+/// skipped via READ_ONLY_BASH above; this list follows the same lowercase
+/// prefix-match pattern.
+const LOW_INFO_BASH: &[&str] = &[
+    "cargo fmt",
+    "cargo clippy",
+    "cargo check",
+    "cargo build",
+    "npm run lint",
+    "npm run build",
+    "npx prettier",
+    "prettier",
+    "npx eslint",
+    "eslint",
+];
+
+/// How many recent action-note hashes each session remembers for dedupe.
+/// Work ping-pongs between a handful of files and commands, so exact-repeat
+/// suppression needs more than the single previous note; 8 covers a typical
+/// edit-test loop while staying too small to ever suppress genuinely new work.
+const NOTE_DEDUPE_WINDOW: usize = 8;
+
+/// Rolling-window dedupe for action notes: true when this note was already
+/// stored recently. Otherwise records the note's hash and trims the window.
+/// Hashes rather than full notes keep the session state file small.
+fn note_seen_recently(recent_hashes: &mut Vec<u64>, note: &str) -> bool {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    note.hash(&mut hasher);
+    let hash = hasher.finish();
+    if recent_hashes.contains(&hash) {
+        return true;
+    }
+    recent_hashes.push(hash);
+    let excess = recent_hashes.len().saturating_sub(NOTE_DEDUPE_WINDOW);
+    if excess > 0 {
+        recent_hashes.drain(..excess);
+    }
+    false
+}
+
+/// Prompts below this length ("ok", "yes", "do it") are pure acknowledgement:
+/// they carry no retrievable content of their own, and the recall side already
+/// blends the previous turn into short follow-up queries, so storing them only
+/// creates junk turn memories.
+const MIN_STORED_PROMPT_CHARS: usize = 12;
+
+/// Whether a stripped, redacted user prompt is substantial enough to store
+/// as a turn.
+fn worth_storing_turn(user_message: &str) -> bool {
+    user_message.chars().count() >= MIN_STORED_PROMPT_CHARS
+}
+
 /// Build a compact memory note for a significant tool action, or None for
 /// tools not worth remembering (reads, searches, navigation).
 fn summarize_tool_action(payload: &serde_json::Value) -> Option<String> {
@@ -610,6 +675,9 @@ fn summarize_tool_action(payload: &serde_json::Value) -> Option<String> {
             }
             let lower = cmd.to_lowercase();
             if READ_ONLY_BASH.iter().any(|p| lower.starts_with(p)) {
+                return None;
+            }
+            if LOW_INFO_BASH.iter().any(|p| lower.starts_with(p)) {
                 return None;
             }
             let compact: String = cmd.chars().take(200).collect();
@@ -789,6 +857,33 @@ fn now_micros() -> u64 {
         .as_micros() as u64
 }
 
+/// Compact show-why suffix for an injected memory line: where it came from
+/// and why it was selected, when the backend provides those fields. The
+/// memory type already leads the line, so it is not repeated here. With no
+/// fields present the suffix is empty and the line renders exactly as before.
+/// Deliberately terse, every character costs prompt tokens.
+fn provenance_suffix(m: &serde_json::Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(project) = m.get("project").and_then(|v| v.as_str())
+        && !project.is_empty()
+    {
+        parts.push(project.to_string());
+    }
+    if let Some(reason) = m.get("reason").and_then(|v| v.as_str())
+        && !reason.is_empty()
+    {
+        parts.push(reason.to_string());
+    }
+    if let Some(score) = m.get("score").and_then(|v| v.as_f64()) {
+        parts.push(format!("{score:.2}"));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", parts.join(", "))
+    }
+}
+
 /// Render backend context JSON ({memories: [...], pain: [...]}) into the text
 /// injected into the model context. Returns None when there is nothing worth
 /// injecting.
@@ -807,7 +902,12 @@ fn format_context(ctx: &serde_json::Value) -> Option<String> {
                 .get("memory_type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("memory");
-            let line = format!("- [{}] {}\n", mtype.to_lowercase(), content);
+            let line = format!(
+                "- [{}] {}{}\n",
+                mtype.to_lowercase(),
+                content,
+                provenance_suffix(m)
+            );
             if out.len() + line.len() > CONTEXT_CHAR_BUDGET {
                 break;
             }
@@ -965,6 +1065,98 @@ mod tests {
             summarize_tool_action(&bash).as_deref(),
             Some("Ran command: cargo test --workspace")
         );
+    }
+
+    #[test]
+    fn format_context_appends_show_why_suffix() {
+        let ctx = json!({ "memories": [
+            {
+                "content": "User prefers Rust",
+                "memory_type": "Semantic",
+                "project": "apex",
+                "reason": "pinned",
+                "score": 0.8234,
+            },
+            { "content": "plain memory", "memory_type": "Semantic" },
+        ]});
+        let text = format_context(&ctx).unwrap();
+        assert!(text.contains("- [semantic] User prefers Rust [apex, pinned, 0.82]"));
+        // Without metadata the line renders exactly as before.
+        assert!(text.contains("- [semantic] plain memory\n"));
+    }
+
+    #[test]
+    fn provenance_suffix_renders_partial_fields() {
+        assert_eq!(provenance_suffix(&json!({})), "");
+        assert_eq!(provenance_suffix(&json!({ "project": "apex" })), " [apex]");
+        assert_eq!(
+            provenance_suffix(&json!({ "reason": "pinned" })),
+            " [pinned]"
+        );
+        assert_eq!(
+            provenance_suffix(&json!({ "project": "apex", "score": 0.5 })),
+            " [apex, 0.50]"
+        );
+        // Non-string and empty fields are ignored, never rendered.
+        assert_eq!(
+            provenance_suffix(&json!({ "project": "", "score": "hi" })),
+            ""
+        );
+    }
+
+    #[test]
+    fn note_dedupe_window_skips_repeats_within_window() {
+        let mut recent = Vec::new();
+        assert!(!note_seen_recently(&mut recent, "Edited file: a.rs"));
+        assert!(!note_seen_recently(&mut recent, "Ran command: cargo test"));
+        // A repeat within the window is suppressed even when not adjacent.
+        assert!(note_seen_recently(&mut recent, "Edited file: a.rs"));
+
+        // Enough distinct notes evict the oldest entry, which then stores again.
+        for i in 0..NOTE_DEDUPE_WINDOW {
+            assert!(!note_seen_recently(&mut recent, &format!("note {i}")));
+        }
+        assert!(recent.len() <= NOTE_DEDUPE_WINDOW);
+        assert!(!note_seen_recently(&mut recent, "Edited file: a.rs"));
+    }
+
+    #[test]
+    fn summarize_tool_action_skips_low_information_commands() {
+        for cmd in [
+            "cargo fmt --all",
+            "cargo clippy -- -D warnings",
+            "cargo build --release",
+            "npm run lint",
+            "npx prettier --write .",
+            "prettier --check src",
+            "eslint src/",
+        ] {
+            let p = json!({ "tool_name": "Bash", "tool_input": { "command": cmd } });
+            assert!(summarize_tool_action(&p).is_none(), "should skip: {cmd}");
+        }
+        // Meaningful commands are still captured.
+        for cmd in [
+            "cargo test --workspace",
+            "npm install left-pad",
+            "git commit -m x",
+        ] {
+            let p = json!({ "tool_name": "Bash", "tool_input": { "command": cmd } });
+            assert!(summarize_tool_action(&p).is_some(), "should keep: {cmd}");
+        }
+    }
+
+    #[test]
+    fn short_prompts_are_not_worth_storing() {
+        for p in ["", "ok", "yes", "do it", "lgtm"] {
+            assert!(!worth_storing_turn(p), "should skip: {p:?}");
+        }
+        for p in [
+            "fix the bug!",
+            "fix the login bug",
+            "why does the daemon restart",
+        ] {
+            assert!(worth_storing_turn(p), "should keep: {p:?}");
+        }
     }
 
     #[test]

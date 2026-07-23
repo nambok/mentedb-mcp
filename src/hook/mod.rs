@@ -229,6 +229,16 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                     format!("{notice}\n\n{text}")
                 };
             }
+            // Surface a stalled write spool in the session itself, so a sync
+            // outage is visible immediately instead of silently dropping turns
+            // for hours. Prepended above any recalled context so it reads first.
+            if let Some(warning) = spool_notice(data_dir) {
+                text = if text.is_empty() {
+                    warning
+                } else {
+                    format!("{warning}\n\n{text}")
+                };
+            }
             if !text.is_empty() {
                 println!(
                     "{}",
@@ -416,6 +426,25 @@ fn auth_notice(data_dir: &Path) -> Option<String> {
          Tell the user to run `npx mentedb-mcp@latest login` to reconnect. \
          New memories are spooling locally and will sync automatically after login."
             .to_string()
+    })
+}
+
+/// When the local write spool has backed up past a small threshold, the cloud
+/// is not accepting writes and recent turns are not being remembered. Surface
+/// that in the session so a sync outage never stays silent for hours; the hook
+/// keeps retrying on its own and the notice clears once the backlog drains.
+fn spool_notice(data_dir: &Path) -> Option<String> {
+    // A retry or two is normal and self-heals within a prompt, so only warn once
+    // a real backlog has formed and this never cries wolf on a transient blip.
+    const SPOOL_WARN_THRESHOLD: usize = 10;
+    let queued = spool::depth(data_dir);
+    (queued >= SPOOL_WARN_THRESHOLD).then(|| {
+        format!(
+            "MenteDB sync warning: {queued} memories are queued locally and have not synced \
+             to the cloud, so recent turns from this session may not be remembered yet. The \
+             hook keeps retrying automatically; if this persists, check \
+             ~/.mentedb/mentedb-hook.log."
+        )
     })
 }
 

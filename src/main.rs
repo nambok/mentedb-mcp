@@ -572,9 +572,11 @@ async fn run_login() -> anyhow::Result<()> {
         std::env::var("MENTEDB_API_URL").unwrap_or_else(|_| "https://api.mentedb.com".to_string());
 
     println!("\n  Waiting for authorization...");
-    println!("  On SSH or a remote machine, the browser cannot reach this process.");
-    println!("  In that case the page shows a connection code after you authorize.");
-    println!("  Paste it here and press Enter:\n");
+    println!("  Approve in the browser and this finishes on its own.");
+    println!();
+    println!("  Only on SSH or a remote machine, where the browser cannot reach this");
+    println!("  terminal, the page shows a code after you approve; paste it here:");
+    println!();
 
     // Whichever arrives first wins: the browser callback (same machine) or a
     // manually pasted connection code (SSH and remote sessions).

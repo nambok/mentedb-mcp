@@ -126,7 +126,7 @@ enum Commands {
         #[command(subcommand)]
         command: AccountsCommand,
     },
-    /// Check cloud connection status
+    /// Print a compact health block from local state (exit 1 when unhealthy)
     Status,
     /// Diagnose the full memory pipeline (credentials, hooks, capture, spool)
     Doctor,
@@ -190,7 +190,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Login) => return run_login().await,
         Some(Commands::Logout) => return run_logout(),
         Some(Commands::Accounts { command }) => return run_accounts(command).await,
-        Some(Commands::Status) => return run_status().await,
+        Some(Commands::Status) => {
+            let data_dir = resolve_data_dir(&cli.data_dir);
+            return run_status(&data_dir).await;
+        }
         Some(Commands::Doctor) => {
             let data_dir = resolve_data_dir(&cli.data_dir);
             return run_doctor(&data_dir).await;
@@ -683,38 +686,6 @@ fn upsert_account(
     Ok(config_path)
 }
 
-/// Persist a fetched email onto an account, best-effort (never fails status).
-fn cache_account_email(dir: &std::path::Path, name: &str, email: &str) {
-    let Ok(mut config) = config::load_accounts(dir) else {
-        return;
-    };
-    if let Some(account) = config.accounts.get_mut(name) {
-        if account.email.as_deref() == Some(email) {
-            return; // Unchanged: avoid a needless write.
-        }
-        account.email = Some(email.to_string());
-        if let Ok(body) = config.to_json_string() {
-            write_secret_file(&config::credentials_path(dir), &body).ok();
-        }
-    }
-}
-
-/// Remove an account and, if it was active, clear the active pointer.
-/// Best-effort: used to drop a revoked account during `status`.
-fn remove_account_silent(dir: &std::path::Path, name: &str) {
-    let Ok(mut config) = config::load_accounts(dir) else {
-        return;
-    };
-    if config.accounts.remove(name).is_some() {
-        if config.active_account.as_deref() == Some(name) {
-            config.active_account = None;
-        }
-        if let Ok(body) = config.to_json_string() {
-            write_secret_file(&config::credentials_path(dir), &body).ok();
-        }
-    }
-}
-
 /// Dispatch `mentedb-mcp accounts <subcommand>`.
 async fn run_accounts(cmd: AccountsCommand) -> anyhow::Result<()> {
     let dir = mentedb_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.mentedb"));
@@ -871,109 +842,162 @@ fn run_logout() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_status() -> anyhow::Result<()> {
-    let dir = mentedb_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.mentedb"));
-    let config_path = config::credentials_path(&dir);
+/// Compact health block built from local state only: files under the data
+/// directory plus two cheap liveness probes (daemon TCP port, cloud /health).
+/// No authenticated calls, no new server endpoints. Exits 1 when unhealthy
+/// (spool backlog or auth error) so scripts can gate on it.
+async fn run_status(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    // A liveness probe, not a real API call; anything slower than this is
+    // effectively down for interactive use.
+    const CLOUD_HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+    // The daemon is on loopback, so a live one accepts a TCP connection
+    // near-instantly; a longer wait only slows down the "not running" answer.
+    const DAEMON_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
-    if !config_path.exists() {
-        println!("  Status: Not logged in");
-        println!("  Run `mentedb-mcp login` to authenticate.");
-        return Ok(());
+    println!("\nMenteDB status v{}\n", env!("CARGO_PKG_VERSION"));
+    println!("  Data dir:   {}", data_dir.display());
+
+    let depth = hook::spool::depth(data_dir);
+    if depth == 0 {
+        println!("  Spool:      empty");
+    } else {
+        println!("  Spool:      {depth} queued");
     }
 
-    let config = config::load_accounts(&dir)?;
-    let Some((active_name, account)) = config.active_account() else {
-        if config.accounts.is_empty() {
-            println!("  Status: Not logged in");
-            println!("  Run `mentedb-mcp login` to authenticate.");
-        } else {
-            println!("  Status: No active account");
-            println!("  Run `mentedb-mcp accounts use <name>` to select one.");
-        }
-        return Ok(());
-    };
-    let active_name = active_name.to_string();
-
-    let token = account.api_key.clone();
-    if token.is_empty() {
-        println!("  Status: Invalid credentials (empty key)");
-        println!("  Run `mentedb-mcp login` to re-authenticate.");
-        return Ok(());
+    // The hook writes this marker on authentication failure and clears it on
+    // the next successful call (see record_auth_state in src/hook/mod.rs).
+    let auth_ok = !data_dir.join("auth_error").exists();
+    if auth_ok {
+        println!("  Auth:       ok");
+    } else {
+        println!("  Auth:       session invalid, run `mentedb-mcp login`");
     }
-    // MENTEDB_API_URL overrides the account's pinned URL, matching how
-    // credentials are loaded for actual requests.
-    let api_url = std::env::var("MENTEDB_API_URL")
+
+    // Daemon liveness from daemon.json, parsed directly (not via the daemon
+    // module) so this also works in cloud-only builds without local mode.
+    let daemon_port = std::fs::read_to_string(data_dir.join("daemon.json"))
         .ok()
-        .or_else(|| account.cloud_url.clone())
-        .unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
-
-    println!("  Active account: {active_name}");
-    println!("  Checking cloud connection...");
-
-    let client = reqwest::Client::new();
-    let res = client
-        .get(format!("{api_url}/api/sessions"))
-        .header("Authorization", format!("Bearer {token}"))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await;
-
-    match res {
-        Ok(resp) => match resp.status().as_u16() {
-            200 => {
-                println!("  Status: Connected");
-                println!("  Cloud URL: {api_url}");
-                println!("  Key: {}", config::mask_secret(&token));
-
-                // Fetch account info
-                match client
-                    .get(format!("{api_url}/api/me"))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .timeout(std::time::Duration::from_secs(5))
-                    .send()
-                    .await
-                {
-                    Ok(me_resp) if me_resp.status().is_success() => {
-                        if let Ok(me) = me_resp.json::<serde_json::Value>().await {
-                            if let Some(email) = me.get("email").and_then(|v| v.as_str()) {
-                                println!("  Email: {email}");
-                                // Cache the email on the account for offline
-                                // `accounts list` display.
-                                cache_account_email(&dir, &active_name, email);
-                            }
-                            if let Some(plan) = me.get("plan").and_then(|v| v.as_str()) {
-                                println!("  Plan: {plan}");
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            401 | 403 => {
-                println!("  Status: Session revoked");
-                println!();
-                println!("  Your session has been revoked (possibly from the web dashboard).");
-                println!("  Run `mentedb-mcp login` to create a new session.");
-                // Remove only the stale account, preserving the others.
-                remove_account_silent(&dir, &active_name);
-            }
-            code => {
-                println!("  Status: Error (HTTP {code})");
-                println!("  The cloud service may be temporarily unavailable.");
-            }
-        },
-        Err(e) => {
-            if e.is_timeout() {
-                println!("  Status: Timeout");
-                println!("  Could not reach {api_url} within 10 seconds.");
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|info| info.get("port").and_then(|p| p.as_u64()))
+        .and_then(|p| u16::try_from(p).ok());
+    match daemon_port {
+        Some(port) => {
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            if std::net::TcpStream::connect_timeout(&addr, DAEMON_CONNECT_TIMEOUT).is_ok() {
+                println!("  Daemon:     running (port {port})");
             } else {
-                println!("  Status: Connection failed");
-                println!("  Error: {e}");
+                println!("  Daemon:     not running (stale daemon.json, port {port})");
             }
         }
+        None => println!("  Daemon:     not started"),
     }
 
-    Ok(())
+    // Cloud reachability: unauthenticated GET /health on the configured base
+    // URL. Answers "is the service up", not "is the token valid"; the auth
+    // line above covers token validity from local state.
+    if config::credentials_path(data_dir).exists() {
+        let api_url = std::env::var("MENTEDB_API_URL")
+            .ok()
+            .or_else(|| {
+                config::load_accounts(data_dir)
+                    .ok()
+                    .and_then(|c| c.active_account().and_then(|(_, a)| a.cloud_url.clone()))
+            })
+            .unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
+        let reachable = reqwest::Client::new()
+            .get(format!("{api_url}/health"))
+            .timeout(CLOUD_HEALTH_TIMEOUT)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if reachable {
+            println!("  Cloud:      reachable ({api_url})");
+        } else {
+            println!("  Cloud:      unreachable ({api_url})");
+        }
+    } else {
+        println!("  Cloud:      not configured (local mode)");
+    }
+
+    match sync_report(data_dir) {
+        SyncReport::LastSuccess(ts) => println!("  Sync:       last successful sync {ts}"),
+        SyncReport::FailingSince(ts) => println!("  Sync:       failing since {ts}"),
+        SyncReport::NoEvents => println!("  Sync:       no sync events logged yet"),
+    }
+
+    println!();
+    let healthy = depth < hook::SPOOL_WARN_THRESHOLD && auth_ok;
+    if healthy {
+        println!("  Health:     ok");
+        Ok(())
+    } else {
+        let mut reasons: Vec<String> = Vec::new();
+        if depth >= hook::SPOOL_WARN_THRESHOLD {
+            reasons.push(format!("spool backlog {depth}"));
+        }
+        if !auth_ok {
+            reasons.push("auth error".to_string());
+        }
+        println!("  Health:     degraded ({})", reasons.join(", "));
+        std::process::exit(1);
+    }
+}
+
+/// Sync recency derived from the newest daily hook log file.
+#[derive(Debug, PartialEq)]
+enum SyncReport {
+    /// Newest sync event is a full spool flush at this timestamp.
+    LastSuccess(String),
+    /// Newest sync event is a store failure at this timestamp.
+    FailingSince(String),
+    /// No hook log or no sync events in it yet.
+    NoEvents,
+}
+
+/// Marker lines written by the hook logger (see flush_spool and the
+/// PostToolUse handler in src/hook/mod.rs). Matched by substring so the
+/// structured fields around them do not matter.
+const SYNC_OK_MARKER: &str = "offline spool fully flushed";
+const SYNC_FAIL_MARKER: &str = "store_note failed";
+
+fn sync_report(data_dir: &std::path::Path) -> SyncReport {
+    // tracing_appender writes daily files named mentedb-hook.log.YYYY-MM-DD;
+    // the date suffix sorts lexically, so max by path is the newest file.
+    let newest_log = std::fs::read_dir(data_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("mentedb-hook.log."))
+        })
+        .max();
+    let Some(path) = newest_log else {
+        return SyncReport::NoEvents;
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return SyncReport::NoEvents;
+    };
+    // Lines are appended chronologically, so the last hit of each marker is
+    // the newest, and its leading token is the tracing timestamp.
+    let newest_ts = |marker: &str| -> Option<String> {
+        raw.lines()
+            .rev()
+            .find(|l| l.contains(marker))
+            .and_then(|l| l.split_whitespace().next())
+            .map(str::to_string)
+    };
+    match (newest_ts(SYNC_OK_MARKER), newest_ts(SYNC_FAIL_MARKER)) {
+        // ISO-8601 timestamps compare chronologically as strings.
+        (Some(ok), Some(fail)) if fail > ok => SyncReport::FailingSince(fail),
+        (Some(ok), _) => SyncReport::LastSuccess(ok),
+        (None, Some(fail)) => SyncReport::FailingSince(fail),
+        (None, None) => SyncReport::NoEvents,
+    }
 }
 
 /// Directory holding MenteDB credentials and state (`~/.mentedb`).
@@ -1808,4 +1832,62 @@ fn setup_cursor(home: &str, binary: &str, force: bool) -> anyhow::Result<()> {
     println!("\nDone! Restart Cursor to activate MenteDB memory.");
     println!("\nTo sync memories across devices, run: mentedb-mcp login");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_report_no_events_without_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(sync_report(dir.path()), SyncReport::NoEvents);
+        // A log with neither marker also reports no events.
+        std::fs::write(
+            dir.path().join("mentedb-hook.log.2026-07-22"),
+            "2026-07-22T09:00:00.000000Z  INFO hook started\n",
+        )
+        .unwrap();
+        assert_eq!(sync_report(dir.path()), SyncReport::NoEvents);
+    }
+
+    #[test]
+    fn sync_report_success_when_flush_is_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mentedb-hook.log.2026-07-22"),
+            concat!(
+                "2026-07-22T09:00:00.000000Z  WARN store_note failed, spooling for retry\n",
+                "2026-07-22T11:00:00.000000Z  INFO offline spool fully flushed\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            sync_report(dir.path()),
+            SyncReport::LastSuccess("2026-07-22T11:00:00.000000Z".to_string())
+        );
+    }
+
+    #[test]
+    fn sync_report_reads_newest_log_and_reports_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        // An older file reports success; only the newest file may be read.
+        std::fs::write(
+            dir.path().join("mentedb-hook.log.2026-07-20"),
+            "2026-07-20T10:00:00.000000Z  INFO offline spool fully flushed\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mentedb-hook.log.2026-07-22"),
+            concat!(
+                "2026-07-22T09:00:00.000000Z  INFO offline spool fully flushed\n",
+                "2026-07-22T11:00:00.000000Z  WARN store_note failed, spooling for retry\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            sync_report(dir.path()),
+            SyncReport::FailingSince("2026-07-22T11:00:00.000000Z".to_string())
+        );
+    }
 }

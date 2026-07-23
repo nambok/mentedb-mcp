@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.31](https://github.com/nambok/mentedb-mcp/compare/v0.5.30...v0.5.31) - 2026-07-23
+
+### Fixed
+
+- *(login)* make the browser path clear and the pasted code SSH-only ([#151](https://github.com/nambok/mentedb-mcp/pull/151))
+
 ## [0.5.30](https://github.com/nambok/mentedb-mcp/compare/v0.5.29...v0.5.30) - 2026-07-23
 
 ### Added

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.32](https://github.com/nambok/mentedb-mcp/compare/v0.5.31...v0.5.32) - 2026-07-23
+
+### Added
+
+- write-time selectivity, show-why context, and status command ([#153](https://github.com/nambok/mentedb-mcp/pull/153))
+
 ## [0.5.31](https://github.com/nambok/mentedb-mcp/compare/v0.5.30...v0.5.31) - 2026-07-23
 
 ### Fixed

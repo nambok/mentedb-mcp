@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.33](https://github.com/nambok/mentedb-mcp/compare/v0.5.32...v0.5.33) - 2026-07-23
+
+### Other
+
+- bump embedded engine to mentedb 0.26 for local mode ([#156](https://github.com/nambok/mentedb-mcp/pull/156))
+
 ## [0.5.32](https://github.com/nambok/mentedb-mcp/compare/v0.5.31...v0.5.32) - 2026-07-23
 
 ### Added

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.35](https://github.com/nambok/mentedb-mcp/compare/v0.5.34...v0.5.35) - 2026-07-24
+
+### Added
+
+- self updating hook registrations on session start
+
 ## [0.5.34](https://github.com/nambok/mentedb-mcp/compare/v0.5.33...v0.5.34) - 2026-07-24
 
 ### Added

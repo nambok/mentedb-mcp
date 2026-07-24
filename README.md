@@ -36,12 +36,13 @@ For Claude Code (the CLI), MenteDB integrates through lifecycle hooks rather tha
 npx mentedb-mcp@latest setup claude-code
 ```
 
-This writes three hooks into `~/.claude/settings.json`:
+This writes six hooks into `~/.claude/settings.json`:
 
 | Hook | What it does |
 |------|-------------|
 | `UserPromptSubmit` | Recalls context for your prompt and injects it before the model responds |
 | `PostToolUse` | Captures significant actions (file edits, non-trivial commands) as they happen, so a long agentic session never loses work if it is interrupted |
+| `PreToolUse` | Surfaces your action rules (memories tagged `trigger:git-commit`, `trigger:pr-create`) right before the matching command runs, so commit style and PR format preferences apply at the exact moment they matter |
 | `Stop` | Stores the completed turn (your prompt plus the assistant's answer) through the full cognitive pipeline |
 | `PreCompact` | Flushes memory to disk before Claude Code compacts a long session, so nothing captured so far is lost |
 | `SessionStart` | Injects your user profile and always-scoped memories at session start, resume, and right after context compaction |
@@ -103,7 +104,7 @@ The `update` command shows you the exact instructions that will be written and a
 | `login` | Authenticate with MenteDB Cloud via browser |
 | `logout` | Remove cloud credentials |
 | `status` | Check cloud connection and token validity |
-| `hook <event>` | Process a lifecycle hook: user-prompt, stop, session-start, post-tool-use, or pre-compact (reads JSON from stdin) |
+| `hook <event>` | Process a lifecycle hook: user-prompt, stop, session-start, post-tool-use, pre-tool-use, pre-compact |
 | `daemon` | Run the local hook daemon (started automatically by hooks when needed) |
 
 ## Authentication

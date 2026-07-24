@@ -121,6 +121,56 @@ impl Backend {
         }
     }
 
+    /// Standing rules for the action the agent is about to take (memories
+    /// tagged `trigger:<action>`), newest first. Best-effort: any failure,
+    /// including an older gateway or daemon that does not know the call,
+    /// returns an empty vec so the hook stays silent and the user's tool
+    /// call is never delayed or blocked.
+    pub async fn action_rules(&self, trigger: &str, k: usize) -> Vec<String> {
+        fn contents(rules: Option<&serde_json::Value>) -> Vec<String> {
+            rules
+                .and_then(|r| r.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|r| r.get("content").and_then(|c| c.as_str()))
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        match self {
+            Backend::Cloud(client) => {
+                let Ok(resp) = client
+                    .call_tool("get_action_rules", json!({ "trigger": trigger, "k": k }))
+                    .await
+                else {
+                    return Vec::new();
+                };
+                if resp.is_error {
+                    // Older gateway: unknown tool comes back as a tool error.
+                    return Vec::new();
+                }
+                let Some(text) = resp.content.first().map(|c| c.text.clone()) else {
+                    return Vec::new();
+                };
+                let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    return Vec::new();
+                };
+                contents(parsed.get("rules"))
+            }
+            #[cfg(feature = "local")]
+            Backend::Local(client) => {
+                let Ok(v) = client
+                    .post("/v1/action-rules", json!({ "trigger": trigger, "k": k }))
+                    .await
+                else {
+                    return Vec::new();
+                };
+                contents(v.get("rules"))
+            }
+        }
+    }
+
     /// Close the attention loop: report which injected memories the reply
     /// drew on. Best-effort; older backends simply ignore it.
     pub async fn record_injection_outcome(&self, shown_ids: &[String], assistant_text: &str) {

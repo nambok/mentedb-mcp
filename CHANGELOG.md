@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.34](https://github.com/nambok/mentedb-mcp/compare/v0.5.33...v0.5.34) - 2026-07-24
+
+### Added
+
+- PreToolUse hook surfaces action rules before commits and PRs ([#163](https://github.com/nambok/mentedb-mcp/pull/163))
+
 ## [0.5.33](https://github.com/nambok/mentedb-mcp/compare/v0.5.32...v0.5.33) - 2026-07-23
 
 ### Other

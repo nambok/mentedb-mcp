@@ -199,6 +199,46 @@ struct InjectionContextRequest {
     max_episodic: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct ActionRulesRequest {
+    trigger: String,
+    #[serde(default)]
+    k: Option<usize>,
+}
+
+/// Standing rules for a class of agent actions (memories tagged
+/// `trigger:<action>`), for the pre-tool hook. Read only, no embedding, no
+/// LLM: a tag-index recall so it stays well inside the hook's time budget.
+async fn action_rules(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Json(req): Json<ActionRulesRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&state, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let db = state.server.db_ref();
+    // Local single-user connector: no per-agent or per-user isolation,
+    // mirror the injection-context route's global owner scope.
+    let rules = db
+        .recall_for_action(&req.trigger, None, None, req.k.unwrap_or(6).min(12))
+        .map_err(|e| {
+            tracing::error!(error = %e, "action rules recall failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let items: Vec<serde_json::Value> = rules
+        .iter()
+        .map(|n| {
+            json!({
+                "id": n.id.to_string(),
+                "content": n.content,
+                "created_at": n.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "rules": items })))
+}
+
 /// Injection-ready context through the engine's attention policy.
 async fn injection_context(
     State(state): State<DaemonState>,
@@ -388,6 +428,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .route("/v1/export", post(export))
         .route("/v1/injection-context", post(injection_context))
         .route("/v1/injection-outcome", post(injection_outcome))
+        .route("/v1/action-rules", post(action_rules))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

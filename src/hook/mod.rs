@@ -36,8 +36,131 @@ pub enum HookEvent {
     SessionStart,
     /// PostToolUse: capture a significant tool action live
     PostToolUse,
+    /// PreToolUse: surface action rules right before a matching tool call
+    PreToolUse,
     /// PreCompact: flush memory before context is compacted away
     PreCompact,
+}
+
+/// Total budget for resolving the backend and fetching action rules inside
+/// the PreToolUse hook. The hook sits directly in front of the user's tool
+/// call, so it must be fast and fail open: on timeout the rules are simply
+/// skipped for this call and the command runs untouched.
+const ACTION_RULES_BUDGET_MS: u64 = 1500;
+
+/// Rules requested per action; mirrors the server side default and keeps the
+/// injected block small.
+const ACTION_RULES_MAX: usize = 6;
+
+/// Split a shell command into segments at unquoted `&&`, `||`, `;`, `|` and
+/// newlines, so each simple command can be inspected on its own. Quoted
+/// operators stay inside their segment, which keeps `git commit -m "a && b"`
+/// as one command and keeps `echo "git commit"` from ever parsing as git.
+fn split_shell_segments(command: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                current.push(c);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                current.push(c);
+            }
+            '\\' if !in_single => {
+                current.push(c);
+                if let Some(n) = chars.next() {
+                    current.push(n);
+                }
+            }
+            '&' | '|' | ';' | '\n' if !in_single && !in_double => {
+                if (c == '&' || c == '|') && chars.peek() == Some(&c) {
+                    chars.next();
+                }
+                segments.push(std::mem::take(&mut current));
+            }
+            _ => current.push(c),
+        }
+    }
+    segments.push(current);
+    segments
+}
+
+/// Leading `FOO=bar` style environment assignments before the program name.
+fn is_env_assignment(token: &str) -> bool {
+    !token.starts_with('-') && !token.starts_with('=') && token.contains('=')
+}
+
+/// The real git subcommand, skipping global flags. Value-consuming globals
+/// (`-c name=value`, `-C path`, and friends) skip their argument too, so
+/// `git -c commit.gpgsign=false commit` resolves to `commit` while
+/// `git config commit.gpgsign false` resolves to `config`.
+fn git_subcommand<'a>(tokens: &[&'a str]) -> Option<&'a str> {
+    const VALUE_FLAGS: [&str; 7] = [
+        "-c",
+        "-C",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--config-env",
+    ];
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = tokens[i];
+        if t.starts_with('-') {
+            if VALUE_FLAGS.contains(&t) {
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        return Some(t);
+    }
+    None
+}
+
+/// Map a Bash command line to an action trigger, or None when no rule class
+/// applies. First match wins across compound segments.
+fn action_trigger_for_command(command: &str) -> Option<&'static str> {
+    for segment in split_shell_segments(command) {
+        let tokens: Vec<&str> = segment.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() && is_env_assignment(tokens[i]) {
+            i += 1;
+        }
+        let Some(&prog) = tokens.get(i) else { continue };
+        let prog_name = prog.rsplit('/').next().unwrap_or(prog);
+        match prog_name {
+            "git" => {
+                if let Some(sub) = git_subcommand(&tokens[i + 1..])
+                    && sub == "commit"
+                {
+                    return Some("git-commit");
+                }
+            }
+            "gh" if tokens.get(i + 1) == Some(&"pr") && tokens.get(i + 2) == Some(&"create") => {
+                return Some("pr-create");
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Human label for a trigger, used in the injected header line.
+fn trigger_label(trigger: &str) -> &'static str {
+    match trigger {
+        "git-commit" => "the git commit you are about to run",
+        "pr-create" => "the pull request you are about to create",
+        _ => "the action you are about to take",
+    }
 }
 
 /// Per-session state persisted across hook invocations.
@@ -390,6 +513,66 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                     &json!({ "kind": "note", "content": note, "project": project }),
                 );
             }
+        }
+        HookEvent::PreToolUse => {
+            // Action-cued rules: right before a matching tool call, fetch the
+            // standing rules for that class of action (tagged
+            // trigger:<action>) and inject them as context. This is the only
+            // moment a commit style preference is relevant, and the one
+            // moment topic similarity cannot find it.
+            //
+            // Safety contract: never emit a permissionDecision (the hook must
+            // not auto-approve or block anything), stay inside a hard time
+            // budget, and on any failure print nothing and exit 0 so the
+            // user's command is never delayed or broken by memory being down.
+            let tool = payload
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if tool != "Bash" {
+                return Ok(());
+            }
+            let command = payload
+                .pointer("/tool_input/command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let Some(trigger) = action_trigger_for_command(command) else {
+                return Ok(());
+            };
+
+            let fetch = async {
+                let backend = Backend::resolve(data_dir, force_local).await.ok()?;
+                Some(backend.action_rules(trigger, ACTION_RULES_MAX).await)
+            };
+            let rules = tokio::time::timeout(
+                std::time::Duration::from_millis(ACTION_RULES_BUDGET_MS),
+                fetch,
+            )
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+            if rules.is_empty() {
+                return Ok(());
+            }
+
+            let mut text = format!(
+                "MenteDB action rules for {} (newest first; when two rules conflict, follow the newest):",
+                trigger_label(trigger)
+            );
+            for r in &rules {
+                text.push_str("\n- ");
+                text.push_str(r);
+            }
+            println!(
+                "{}",
+                json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": text,
+                    }
+                })
+            );
         }
         HookEvent::PreCompact => {
             // The injection ledger mirrors what is in the model's context;
@@ -994,6 +1177,92 @@ fn format_session_context(ctx: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_trigger_fires_on_real_commit_shapes() {
+        // The exact command shapes agents actually run, including global
+        // flags whose values contain the word commit.
+        for cmd in [
+            "git commit -m \"fix: something\"",
+            "git -c commit.gpgsign=false commit -q -m \"x\"",
+            "git commit --amend --no-edit",
+            "cd /tmp/repo && git commit -m 'y'",
+            "git add -A && git -c commit.gpgsign=false commit -m \"z\" && git log -1",
+            "FOO=bar git commit -m x",
+            "/usr/bin/git commit -m x",
+            "git -C /tmp/repo commit -m x",
+            "git commit -m \"quoted && operator inside\"",
+        ] {
+            assert_eq!(
+                action_trigger_for_command(cmd),
+                Some("git-commit"),
+                "should fire: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_trigger_never_fires_on_lookalikes() {
+        // False triggers are the failure mode that erodes trust: none of
+        // these is a commit.
+        for cmd in [
+            "git log --oneline -5",
+            "git config commit.gpgsign false",
+            "git config --get commit.template",
+            "echo \"git commit\"",
+            "echo 'run git commit later'",
+            "git log | grep commit",
+            "git status",
+            "git show HEAD --stat",
+            "grep -rn \"git commit\" docs/",
+            "cargo test commit_parser",
+            "git push origin main",
+            "gh pr view 42",
+            "gh pr merge 42",
+        ] {
+            assert_eq!(
+                action_trigger_for_command(cmd),
+                None,
+                "must not fire: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_trigger_pr_create() {
+        assert_eq!(
+            action_trigger_for_command("gh pr create --title x --body y"),
+            Some("pr-create")
+        );
+        assert_eq!(
+            action_trigger_for_command("git push -u origin b && gh pr create --fill"),
+            Some("pr-create")
+        );
+        assert_eq!(
+            action_trigger_for_command("gh pr create"),
+            Some("pr-create")
+        );
+    }
+
+    #[test]
+    fn action_trigger_first_match_wins_and_empty_safe() {
+        // A commit in the same compound command leads.
+        assert_eq!(
+            action_trigger_for_command("git commit -m x && gh pr create --fill"),
+            Some("git-commit")
+        );
+        assert_eq!(action_trigger_for_command(""), None);
+        assert_eq!(action_trigger_for_command("   "), None);
+    }
+
+    #[test]
+    fn shell_segments_respect_quotes() {
+        let segs = split_shell_segments("git commit -m \"a && b\" && git push");
+        assert_eq!(segs.len(), 2);
+        assert!(segs[0].contains("a && b"));
+        let segs = split_shell_segments("echo 'x; y' ; git commit");
+        assert_eq!(segs.len(), 2);
+    }
 
     #[test]
     fn format_context_renders_memories_and_pain() {

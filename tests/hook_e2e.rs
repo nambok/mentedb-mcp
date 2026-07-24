@@ -387,3 +387,141 @@ fn hook_tolerates_garbage_input() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn pre_tool_use_injects_action_rules_before_commit() {
+    use mentedb::prelude::*;
+    use mentedb_core::types::AgentId;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    // Seed action rules directly in the engine, then close it so the daemon
+    // (single writer) can open the same directory.
+    {
+        let db = mentedb::MenteDb::open(dir.path()).unwrap();
+        let mut commit_rule = MemoryNode::new(
+            AgentId::nil(),
+            MemoryType::Procedural,
+            "never add Co-Authored-By trailers to commits".to_string(),
+            vec![],
+        );
+        commit_rule.tags = vec!["trigger:git-commit".to_string()];
+        db.store(commit_rule).unwrap();
+
+        let mut pr_rule = MemoryNode::new(
+            AgentId::nil(),
+            MemoryType::Procedural,
+            "PR descriptions use Summary and Verification sections".to_string(),
+            vec![],
+        );
+        pr_rule.tags = vec!["trigger:pr-create".to_string()];
+        db.store(pr_rule).unwrap();
+
+        let ordinary = MemoryNode::new(
+            AgentId::nil(),
+            MemoryType::Semantic,
+            "the user prefers dark mode".to_string(),
+            vec![],
+        );
+        db.store(ordinary).unwrap();
+        // Persist the indexes (the tag bitmap is written by close, not drop)
+        // so the daemon reopening this directory sees the trigger index.
+        db.close().unwrap();
+    }
+
+    let _guard = spawn_daemon(dir.path());
+    wait_for_daemon(dir.path(), Duration::from_secs(120));
+
+    // The exact command shape agents run, global flag value containing the
+    // word commit included.
+    let out = run_hook(
+        dir.path(),
+        "pre-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-pre",
+            "tool_name": "Bash",
+            "tool_input": { "command": "git -c commit.gpgsign=false commit -m \"fix: x\"" },
+            "cwd": "/tmp/myproj",
+            "hook_event_name": "PreToolUse",
+        }),
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(out.trim()).expect("pre-tool-use must print valid JSON");
+    let hso = &parsed["hookSpecificOutput"];
+    assert_eq!(hso["hookEventName"], "PreToolUse");
+    let ctx = hso["additionalContext"].as_str().unwrap_or_default();
+    assert!(
+        ctx.contains("never add Co-Authored-By trailers"),
+        "commit rule must be injected, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("Summary and Verification"),
+        "pr-create rule must not fire on a commit, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("dark mode"),
+        "ordinary memories must not enter the action channel, got: {ctx}"
+    );
+    assert!(
+        hso.get("permissionDecision").is_none(),
+        "the hook must never emit a permission decision"
+    );
+
+    // Non-commit git commands stay silent.
+    let out = run_hook(
+        dir.path(),
+        "pre-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-pre",
+            "tool_name": "Bash",
+            "tool_input": { "command": "git log --oneline -3" },
+            "hook_event_name": "PreToolUse",
+        }),
+    );
+    assert!(
+        out.trim().is_empty(),
+        "git log must not trigger rules: {out}"
+    );
+
+    // Non-Bash tools stay silent even if their input mentions git.
+    let out = run_hook(
+        dir.path(),
+        "pre-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-pre",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "git_commit.rs" },
+            "hook_event_name": "PreToolUse",
+        }),
+    );
+    assert!(out.trim().is_empty(), "non-Bash tools are ignored: {out}");
+}
+
+#[test]
+fn pre_tool_use_is_silent_with_no_rules_and_tolerates_garbage() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = spawn_daemon(dir.path());
+    wait_for_daemon(dir.path(), Duration::from_secs(120));
+
+    // A commit with zero stored rules injects nothing.
+    let out = run_hook(
+        dir.path(),
+        "pre-tool-use",
+        &serde_json::json!({
+            "session_id": "sess-empty",
+            "tool_name": "Bash",
+            "tool_input": { "command": "git commit -m x" },
+            "hook_event_name": "PreToolUse",
+        }),
+    );
+    assert!(out.trim().is_empty(), "no rules means no output: {out}");
+
+    // Garbage stdin never breaks the tool call: exit 0, no output. run_hook
+    // asserts the exit status itself.
+    let out = run_hook(
+        dir.path(),
+        "pre-tool-use",
+        &serde_json::json!("not an object"),
+    );
+    assert!(out.trim().is_empty());
+}

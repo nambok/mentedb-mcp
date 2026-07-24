@@ -3,7 +3,7 @@ use super::*;
 #[rmcp::tool_router(router = tool_router_memory, vis = "pub")]
 impl MenteDbServer {
     #[rmcp::tool(
-        description = "Store an important fact, preference, decision, or correction. Use types: semantic (facts), procedural (how-to), correction (fixes), anti_pattern (mistakes to avoid). Add tags for retrieval."
+        description = "Store an important fact, preference, decision, or correction. Use types: semantic (facts), procedural (how-to), correction (fixes), anti_pattern (mistakes to avoid). Add tags for retrieval. For rules about HOW to perform an action (commit style, PR format), add a trigger:<action> tag (trigger:git-commit, trigger:pr-create) so the rule surfaces right before that action runs."
     )]
     async fn store_memory(
         &self,

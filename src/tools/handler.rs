@@ -12,6 +12,7 @@ impl ServerHandler for MenteDbServer {
              4. forget_memory — Delete a memory when the user asks to forget.\n\
              \n\
              SCOPE: Set scope: 'always' for hard rules/constraints the user wants enforced every turn. Default 'contextual' is retrieved by similarity.\n\
+             ACTION RULES: when the user states a rule about HOW to perform a class of action (commit message style, PR format, push policy), tag it trigger:<action> in lowercase kebab case: trigger:git-commit, trigger:pr-create, trigger:git-push. These surface automatically right before that action runs, so do NOT also mark them scope: 'always'.\n\
              TYPES: semantic (facts/preferences), procedural (how-to), correction (was wrong now right), anti_pattern (never do X), episodic (what happened), reasoning (why a decision was made).\n\
              QUALITY: One fact per memory. Self-contained. Include project context. Under 200 words. Don't store chitchat, temp info, or large code blocks.\n\
              USE THE CONTEXT: process_turn returns summaries with IDs. Reference them. Call search_memories(id) for full text.\n\

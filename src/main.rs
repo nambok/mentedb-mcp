@@ -1113,6 +1113,7 @@ async fn run_doctor(data_dir: &std::path::Path) -> anyhow::Result<()> {
         "Stop",
         "SessionStart",
         "PostToolUse",
+        "PreToolUse",
         "PreCompact",
     ];
     for dir in claude_config_dirs(&home) {
@@ -1398,6 +1399,7 @@ fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()
     println!("\nDone. MenteDB now runs on every Claude Code turn via hooks:");
     println!("  UserPromptSubmit  recalls context for the prompt");
     println!("  PostToolUse       captures significant actions as they happen");
+    println!("  PreToolUse        surfaces action rules before git commits and PRs");
     println!("  Stop              stores the completed turn");
     println!("  PreCompact        flushes memory before context is compacted");
     println!("  SessionStart      injects your profile and standing rules");
@@ -1428,19 +1430,31 @@ fn install_claude_code_hooks(
         *hooks = serde_json::json!({});
     }
 
-    let events: [(&str, &str, &str); 5] = [
-        ("UserPromptSubmit", "user-prompt", ""),
-        ("Stop", "stop", ""),
-        ("SessionStart", "session-start", "startup|resume|compact"),
+    // (event, subcommand, matcher, timeout seconds). The timeout matters for
+    // PreToolUse: it runs directly in front of the user's tool call and the
+    // client's default hook timeout is far too long to risk there; 5 seconds
+    // caps the worst case while the hook's internal budget keeps the normal
+    // case near-instant and fail-open.
+    let events: [(&str, &str, &str, Option<u64>); 6] = [
+        ("UserPromptSubmit", "user-prompt", "", None),
+        ("Stop", "stop", "", None),
+        (
+            "SessionStart",
+            "session-start",
+            "startup|resume|compact",
+            None,
+        ),
         (
             "PostToolUse",
             "post-tool-use",
             "Write|Edit|MultiEdit|NotebookEdit|Bash",
+            None,
         ),
-        ("PreCompact", "pre-compact", ""),
+        ("PreToolUse", "pre-tool-use", "Bash", Some(5)),
+        ("PreCompact", "pre-compact", "", None),
     ];
 
-    for (event, subcommand, matcher) in events {
+    for (event, subcommand, matcher, timeout) in events {
         let command = format!("{hook_command} {subcommand}");
         let entries = hooks
             .as_object_mut()
@@ -1477,9 +1491,11 @@ fn install_claude_code_hooks(
             });
         }
 
-        let mut group = serde_json::json!({
-            "hooks": [ { "type": "command", "command": command } ]
-        });
+        let mut hook_entry = serde_json::json!({ "type": "command", "command": command });
+        if let Some(secs) = timeout {
+            hook_entry["timeout"] = serde_json::json!(secs);
+        }
+        let mut group = serde_json::json!({ "hooks": [hook_entry] });
         if !matcher.is_empty() {
             group["matcher"] = serde_json::json!(matcher);
         }

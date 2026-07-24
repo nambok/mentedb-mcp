@@ -102,6 +102,10 @@ fn run_hook(data_dir: &Path, event: &str, payload: &serde_json::Value) -> String
             "hook",
             event,
         ])
+        // Keep tests hermetic: never let the hook reconcile the developer's
+        // real Claude Code settings; the self-update path has its own test
+        // with an isolated home.
+        .env("MENTEDB_HOOK_NO_SELF_UPDATE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -524,4 +528,109 @@ fn pre_tool_use_is_silent_with_no_rules_and_tolerates_garbage() {
         &serde_json::json!("not an object"),
     );
     assert!(out.trim().is_empty());
+}
+
+#[test]
+fn session_start_self_updates_hook_registrations() {
+    // A settings file written by an older version (five events, no
+    // pre-tool-use) must gain the missing hook on session start, while a
+    // config dir that never ran setup stays untouched.
+    let home = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let ours = home.path().join(".claude");
+    std::fs::create_dir_all(&ours).unwrap();
+    let old_settings = serde_json::json!({
+        "hooks": {
+            "UserPromptSubmit": [
+                { "hooks": [ { "type": "command", "command": "npx -y mentedb-mcp@latest hook user-prompt" } ] }
+            ],
+            "Stop": [
+                { "hooks": [ { "type": "command", "command": "npx -y mentedb-mcp@latest hook stop" } ] }
+            ],
+            "SessionStart": [
+                { "matcher": "startup|resume|compact",
+                  "hooks": [ { "type": "command", "command": "npx -y mentedb-mcp@latest hook session-start" } ] }
+            ],
+            "PostToolUse": [
+                { "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                  "hooks": [ { "type": "command", "command": "npx -y mentedb-mcp@latest hook post-tool-use" } ] }
+            ],
+            "PreCompact": [
+                { "hooks": [ { "type": "command", "command": "npx -y mentedb-mcp@latest hook pre-compact" } ] }
+            ]
+        }
+    });
+    std::fs::write(
+        ours.join("settings.json"),
+        serde_json::to_string_pretty(&old_settings).unwrap(),
+    )
+    .unwrap();
+
+    // A second profile with hooks from some other tool and no mentedb:
+    // the consent guard must leave it alone.
+    let theirs = home.path().join(".claude-other");
+    std::fs::create_dir_all(&theirs).unwrap();
+    let foreign = r#"{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "other-tool hook stop" } ] } ] } }"#;
+    std::fs::write(theirs.join("settings.json"), foreign).unwrap();
+
+    let run = |label: &str| {
+        let mut child = Command::new(BIN)
+            .args([
+                "--data-dir",
+                data_dir.path().to_str().unwrap(),
+                "--local",
+                "hook",
+                "session-start",
+            ])
+            .env("HOME", home.path())
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("MENTEDB_HOOK_NO_SELF_UPDATE")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to run hook");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(br#"{"session_id":"self-update"}"#)
+            .unwrap();
+        let out = child.wait_with_output().expect("hook did not exit");
+        assert!(out.status.success(), "{label}: hook must exit 0");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    let out = run("first");
+    let updated = std::fs::read_to_string(ours.join("settings.json")).unwrap();
+    assert!(
+        updated.contains("hook pre-tool-use"),
+        "missing hook must be added: {updated}"
+    );
+    assert!(
+        updated.contains("hook user-prompt"),
+        "existing hooks must survive"
+    );
+    assert!(
+        out.contains("refreshed its Claude Code hooks"),
+        "session output must mention the refresh: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(theirs.join("settings.json")).unwrap(),
+        foreign,
+        "profiles without mentedb hooks must never be touched"
+    );
+    let marker = std::fs::read_to_string(data_dir.path().join("hooks_version")).unwrap();
+    assert_eq!(marker.trim(), env!("CARGO_PKG_VERSION"));
+
+    // Second run: marker matches, nothing changes, no refresh notice.
+    let before = std::fs::read_to_string(ours.join("settings.json")).unwrap();
+    let out = run("second");
+    let after = std::fs::read_to_string(ours.join("settings.json")).unwrap();
+    assert_eq!(before, after, "reconcile must be once per version");
+    assert!(
+        !out.contains("refreshed its Claude Code hooks"),
+        "no repeat notice: {out}"
+    );
 }

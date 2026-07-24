@@ -1409,6 +1409,75 @@ fn setup_claude_code(home: &str, binary: &str, force: bool) -> anyhow::Result<()
     Ok(())
 }
 
+/// The hook subcommands a current install registers. Used by the self-update
+/// reconcile to detect a settings file written by an older version.
+const HOOK_SUBCOMMANDS: [&str; 6] = [
+    "user-prompt",
+    "stop",
+    "session-start",
+    "post-tool-use",
+    "pre-tool-use",
+    "pre-compact",
+];
+
+/// Reconcile installed Claude Code hooks with this binary version.
+///
+/// The npx launcher auto-updates the binary on every hook invocation, but
+/// the hook registrations in settings.json only change when something
+/// rewrites them, so a release that adds a hook event never reaches users
+/// who set up earlier. This runs from the SessionStart hook and closes that
+/// gap: once per binary version (marker file in the data dir), only in
+/// settings files that already carry mentedb hooks (running setup was the
+/// consent), only when a registration is actually missing, and add-only
+/// through the idempotent installer which never touches non mentedb hooks.
+/// Returns the settings paths it changed; every failure is skipped silently
+/// because this runs inside a hook that must never break the session.
+pub(crate) fn ensure_hooks_current(data_dir: &std::path::Path) -> Vec<String> {
+    let mut updated = Vec::new();
+    let marker = data_dir.join("hooks_version");
+    let current = env!("CARGO_PKG_VERSION");
+    if std::fs::read_to_string(&marker)
+        .map(|v| v.trim() == current)
+        .unwrap_or(false)
+    {
+        return updated;
+    }
+    let Some(home) = home_dir() else {
+        return updated;
+    };
+    let binary = which_mentedb_mcp();
+    let hook_command = if binary == "npx" {
+        "npx -y mentedb-mcp@latest hook".to_string()
+    } else {
+        format!("{binary} hook")
+    };
+    for dir in claude_config_dirs(&home) {
+        let settings_path = dir.join("settings.json");
+        let Ok(raw) = std::fs::read_to_string(&settings_path) else {
+            continue;
+        };
+        // Consent guard: reconcile only where the user already installed
+        // mentedb hooks; never add hooks to a profile setup never touched.
+        if !raw.contains("mentedb-mcp") {
+            continue;
+        }
+        // Rewrite only when a registration is actually missing, so an
+        // up-to-date settings file is never touched (rewriting reorders
+        // keys and churns diffs for no reason).
+        let missing = HOOK_SUBCOMMANDS
+            .iter()
+            .any(|sub| !raw.contains(&format!("hook {sub}")));
+        if !missing {
+            continue;
+        }
+        if install_claude_code_hooks(&settings_path, &hook_command, false).is_ok() {
+            updated.push(settings_path.display().to_string());
+        }
+    }
+    let _ = std::fs::write(&marker, current);
+    updated
+}
+
 fn install_claude_code_hooks(
     settings_path: &std::path::Path,
     hook_command: &str,

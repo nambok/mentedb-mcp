@@ -36,7 +36,7 @@ For Claude Code (the CLI), MenteDB integrates through lifecycle hooks rather tha
 npx mentedb-mcp@latest setup claude-code
 ```
 
-This writes six hooks into `~/.claude/settings.json`:
+This writes six hooks into `~/.claude/settings.json` (and every other Claude Code config directory you use). The npx launcher always runs the latest version, and the hooks keep themselves current: when a new release adds a hook event, the next session start registers it automatically, so setup is a one time step.
 
 | Hook | What it does |
 |------|-------------|

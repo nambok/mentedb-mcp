@@ -450,6 +450,18 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             }
         }
         HookEvent::SessionStart => {
+            // The npx launcher auto-updates the binary, but hook
+            // registrations in settings.json only change when something
+            // rewrites them; reconcile once per binary version so a release
+            // that adds a hook event reaches existing installs without a
+            // manual setup re-run. Best effort and add-only; the escape
+            // hatch exists for tests and for pinning.
+            let hooks_updated = if std::env::var("MENTEDB_HOOK_NO_SELF_UPDATE").is_err() {
+                crate::ensure_hooks_current(data_dir)
+            } else {
+                Vec::new()
+            };
+
             let backend = Backend::resolve(data_dir, force_local).await?;
             let ctx = match backend.session_context().await {
                 Ok(c) => {
@@ -471,6 +483,18 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                     notice
                 } else {
                     format!("{notice}\n\n{text}")
+                };
+            }
+            if !hooks_updated.is_empty() {
+                let update_note = format!(
+                    "MenteDB refreshed its Claude Code hooks to match the installed version ({} file{}); new hooks activate on the next session.",
+                    hooks_updated.len(),
+                    if hooks_updated.len() == 1 { "" } else { "s" }
+                );
+                text = if text.is_empty() {
+                    update_note
+                } else {
+                    format!("{update_note}\n\n{text}")
                 };
             }
             if !text.is_empty() {

@@ -1666,12 +1666,12 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f0627d11f77f3283e1d02ae8dcb9b78e879e2eba96e0f7f52820596de6cce9d"
 dependencies = [
- "mentedb-cognitive",
+ "mentedb-cognitive 0.26.0",
  "mentedb-consolidation",
  "mentedb-context",
- "mentedb-core",
- "mentedb-embedding",
- "mentedb-extraction",
+ "mentedb-core 0.26.0",
+ "mentedb-embedding 0.26.0",
+ "mentedb-extraction 0.26.0",
  "mentedb-graph",
  "mentedb-index",
  "mentedb-query",
@@ -1692,7 +1692,24 @@ checksum = "cc9b90a1a82715eef1db3c6baba57338ed369fad1aae8e738ae870d42cd2f6ab"
 dependencies = [
  "ahash",
  "crossbeam",
- "mentedb-core",
+ "mentedb-core 0.26.0",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "mentedb-cognitive"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e4d63f3aa1c86a02fb954f9915e618d6ccd7bd1d15c1c98ec6d7324cf62903f"
+dependencies = [
+ "ahash",
+ "crossbeam",
+ "mentedb-core 0.27.0",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1708,7 +1725,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3380bb4b1baecf16ecbfc68c5ab824e82c0682183bb5353537d3b47f8ad0149d"
 dependencies = [
  "ahash",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "serde",
  "tracing",
  "uuid",
@@ -1721,7 +1738,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bfeba43e88fd77d8a4d057a3e2adde77baf182ad2044559f6a9f771ac72b78"
 dependencies = [
  "ahash",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "serde",
  "thiserror 2.0.19",
  "tracing",
@@ -1746,6 +1763,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mentedb-core"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd8e427fb735663d6ed2011038c342d83eda09dbb3af4635d6bfb9bd24fe8152"
+dependencies = [
+ "ahash",
+ "bytemuck",
+ "bytes",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.19",
+ "uuid",
+]
+
+[[package]]
 name = "mentedb-embedding"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1755,11 +1789,25 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "hf-hub",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokenizers 0.21.4",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mentedb-embedding"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e09f4598febb2fc07fc4a2b26ea1387f4de0add701fe30bd6d9afd65ed5ad84d"
+dependencies = [
+ "mentedb-core 0.27.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -1770,9 +1818,27 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0a1c6cbda06f758f995825eab4f0a306216e285b685d17a12ba64fb8e550a8b"
 dependencies = [
- "mentedb-cognitive",
- "mentedb-core",
- "mentedb-embedding",
+ "mentedb-cognitive 0.26.0",
+ "mentedb-core 0.26.0",
+ "mentedb-embedding 0.26.0",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "mentedb-extraction"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69c0bf1acc39458e14251fcb4a5542b47e6587139d5c05983fff98f23df54e85"
+dependencies = [
+ "mentedb-cognitive 0.27.0",
+ "mentedb-core 0.27.0",
+ "mentedb-embedding 0.27.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -1791,7 +1857,7 @@ dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1808,7 +1874,7 @@ dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "parking_lot",
  "rand 0.9.5",
  "roaring",
@@ -1826,12 +1892,12 @@ dependencies = [
  "axum",
  "clap",
  "mentedb",
- "mentedb-cognitive",
+ "mentedb-cognitive 0.26.0",
  "mentedb-consolidation",
  "mentedb-context",
- "mentedb-core",
- "mentedb-embedding",
- "mentedb-extraction",
+ "mentedb-core 0.26.0",
+ "mentedb-embedding 0.26.0",
+ "mentedb-extraction 0.27.0",
  "mentedb-graph",
  "open",
  "openssl",
@@ -1855,7 +1921,7 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81a5cafafd5933ad904833d3f3a3dac9565a0868137e550509152e7955ca0e2c"
 dependencies = [
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "serde",
  "thiserror 2.0.19",
  "tracing",
@@ -1876,7 +1942,7 @@ dependencies = [
  "fs2",
  "libc",
  "lz4_flex",
- "mentedb-core",
+ "mentedb-core 0.26.0",
  "parking_lot",
  "serde",
  "serde_json",

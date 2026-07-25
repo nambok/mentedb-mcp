@@ -290,6 +290,7 @@ async fn injection_context(
                 "reason": match c.reason {
                     mentedb::injection::SelectionReason::Pinned => "pinned",
                     mentedb::injection::SelectionReason::Relevant => "relevant",
+                    mentedb::injection::SelectionReason::ModeRule => "mode_rule",
                 },
             })
         })

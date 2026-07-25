@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.36](https://github.com/nambok/mentedb-mcp/compare/v0.5.35...v0.5.36) - 2026-07-25
+
+### Added
+
+- engine 0.28, mode activation reaches the local daemon injection path ([#166](https://github.com/nambok/mentedb-mcp/pull/166))
+
 ## [0.5.35](https://github.com/nambok/mentedb-mcp/compare/v0.5.34...v0.5.35) - 2026-07-24
 
 ### Added

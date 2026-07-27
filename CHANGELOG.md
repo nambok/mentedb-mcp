@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.37](https://github.com/nambok/mentedb-mcp/compare/v0.5.36...v0.5.37) - 2026-07-27
+
+### Other
+
+- engine pins 0.28 to 0.32, agent file sync and injection features ride along ([#169](https://github.com/nambok/mentedb-mcp/pull/169))
+
 ## [0.5.36](https://github.com/nambok/mentedb-mcp/compare/v0.5.35...v0.5.36) - 2026-07-25
 
 ### Added

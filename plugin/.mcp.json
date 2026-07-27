@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mentedb": {
+      "url": "https://api.mentedb.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MENTEDB_API_KEY}"
+      }
+    }
+  }
+}

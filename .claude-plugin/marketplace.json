@@ -1,0 +1,11 @@
+{
+  "name": "mentedb",
+  "owner": { "name": "MenteDB", "url": "https://mentedb.com" },
+  "plugins": [
+    {
+      "name": "mentedb",
+      "source": "./plugin",
+      "description": "Persistent memory for Claude: recall before answering, capture after, contradictions detected, survives compaction."
+    }
+  ]
+}

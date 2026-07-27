@@ -1662,9 +1662,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e776e38f505e3ce370e92dd03bf2fd8c9178e66b62979776d3596330c5e3828"
+checksum = "d4d7ea3c7e6faba81d24b0e9a4134762d350803287faf19aeb4811c6d7a99001"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-consolidation",
@@ -1686,9 +1686,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edc59dcb01cb2cc4a8a2ec00fee8f6bc4a61a4452af3cc449d781cc09443d06b"
+checksum = "1a42829b3ef9a1ffe28863bed303253702ce10309bb200d34310d018e6410119"
 dependencies = [
  "ahash",
  "crossbeam",
@@ -1703,9 +1703,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-consolidation"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a49dbd20854b850c6ab062c6d99a7a34787434b1eb56abe1a98feebae7efcfef"
+checksum = "3de26313c974597786076fce8b8e4d5edc8f46e8d08cfc78848e41686d6fb8a9"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1716,9 +1716,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-context"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a611c4d682a124e626fa49c3f6e130e87c7ff2af13c483948572a4fe05a71bfe"
+checksum = "23f9b0766c7de284b5cb2dc83e06091cb8ff8d5a5a70e7965d319d0389d73fe7"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1730,9 +1730,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc18b363ce00247f1f08cc2edede0b63ef798d8da641227e9817322c4031a21b"
+checksum = "c1a5e50cd8aced7d012d7ce3d7234c34eaa76d662d2e3422ebbcf604acfee88f"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1747,9 +1747,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fbd582571fd4f50cd12cd64a281c81315ff947fdbadc7545a02f296c6b0ba14"
+checksum = "b33e8ba22b2bd47a048d73fe3779eb9803192aaad321c8fe0f9bd832f8f0e792"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -1766,9 +1766,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "272d79b2e6893f6aadf52ab0063836eb05852a53f8951a4325c85f8f662b4bbb"
+checksum = "dc7c454c9c650da634a69f708cb655e41a80ce6cbf36e7771096c4829afa5082"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-core",
@@ -1784,9 +1784,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e93ccf1543cb973227ed9f9e9609ca8e7c09fc872e3181ddf3bf36cbe794eff"
+checksum = "f7b5597028c598d0b7005c9a40107ed1b28fd1c63651aabc143eb25e38fc8792"
 dependencies = [
  "ahash",
  "bincode",
@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ec2a7e407d1b006a83a0689ca62428d50d8ac0551155e18a0029a38b31d5e5"
+checksum = "9d8fceaaf03ca106ac867bc65c543f702ca388a7c101894b1cdab39f2c75dd9a"
 dependencies = [
  "ahash",
  "bincode",
@@ -1851,9 +1851,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc178c0a24126b86c26c70d23820557e355af7274fdc7e538c897fdb57c9f4ef"
+checksum = "f58ebfdab3e66149337477854e7ab241ff3bce499c207ebb091cfbaedf8ab3a1"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1864,9 +1864,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.28.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6231992c39815dd35fccf690647aa496c5ba5b74df9635304bc490cee02a5d7"
+checksum = "a26bb40ec12186f91209f77732b3baf0fd3313e0a1c6f3edf7a3e9e70629c981"
 dependencies = [
  "ahash",
  "bincode",

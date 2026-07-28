@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.38](https://github.com/nambok/mentedb-mcp/compare/v0.5.37...v0.5.38) - 2026-07-28
+
+### Added
+
+- plugin parity with Claude Code, env key auth, hook dedup, surface aware skill ([#174](https://github.com/nambok/mentedb-mcp/pull/174))
+- the mentedb Claude plugin, marketplace installable memory for Code and Cowork ([#172](https://github.com/nambok/mentedb-mcp/pull/172))
+
 ## [0.5.37](https://github.com/nambok/mentedb-mcp/compare/v0.5.36...v0.5.37) - 2026-07-27
 
 ### Other

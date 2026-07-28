@@ -1,10 +1,19 @@
 {
   "name": "mentedb",
   "description": "Persistent memory for Claude: recalls what matters before answering, stores what it learns after, detects contradictions, and survives compaction. Works in Claude Code today with deterministic lifecycle hooks; in Cowork the bundled memory skill drives recall and capture until per turn hook events are enabled there.",
-  "version": "0.1.0",
-  "author": { "name": "MenteDB", "url": "https://mentedb.com" },
+  "version": "0.2.0",
+  "author": {
+    "name": "MenteDB",
+    "url": "https://mentedb.com"
+  },
   "homepage": "https://mentedb.com/docs",
   "repository": "https://github.com/nambok/mentedb-mcp",
   "license": "Apache-2.0",
-  "keywords": ["memory", "recall", "knowledge", "context", "mcp"]
+  "keywords": [
+    "memory",
+    "recall",
+    "knowledge",
+    "context",
+    "mcp"
+  ]
 }

@@ -247,9 +247,58 @@ pub async fn run(event: HookEvent, data_dir: PathBuf, force_local: bool) -> anyh
     Ok(())
 }
 
+/// Collapse duplicate hook invocations. A marketplace plugin install and a
+/// settings.json install can both register this same handler; the client then
+/// fires each event twice within milliseconds with identical stdin. Capturing
+/// twice double-stores the turn and double-counts it against the plan, so an
+/// identical (event, payload) pair seen within the window no-ops. The window
+/// is far above the duplicate-registration race and far below any real repeat
+/// of the same event with byte-identical payload. Best effort: any filesystem
+/// failure means "not a duplicate", the hook must never break on this.
+fn is_duplicate_fire(data_dir: &Path, event: &HookEvent, raw: &str) -> bool {
+    use std::hash::{Hash, Hasher};
+
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    raw.hash(&mut hasher);
+    let marker = data_dir
+        .join("hook_dedup")
+        .join(format!("{event:?}-{:016x}", hasher.finish()));
+
+    if let Ok(meta) = std::fs::metadata(&marker)
+        && let Ok(modified) = meta.modified()
+        && modified.elapsed().map(|age| age < WINDOW).unwrap_or(false)
+    {
+        return true;
+    }
+
+    if let Some(dir) = marker.parent() {
+        std::fs::create_dir_all(dir).ok();
+        // Opportunistic prune so the marker dir stays a handful of files.
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let stale = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .map(|m| m.elapsed().map(|age| age > WINDOW * 12).unwrap_or(true))
+                    .unwrap_or(true);
+                if stale {
+                    std::fs::remove_file(entry.path()).ok();
+                }
+            }
+        }
+    }
+    std::fs::write(&marker, b"").ok();
+    false
+}
+
 async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyhow::Result<()> {
     let mut raw = String::new();
     std::io::stdin().read_to_string(&mut raw).ok();
+    if is_duplicate_fire(data_dir, &event, &raw) {
+        return Ok(());
+    }
     let payload: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
     let session_id = payload
         .get("session_id")

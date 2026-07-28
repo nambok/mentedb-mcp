@@ -1005,13 +1005,32 @@ fn mentedb_dir() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(home_dir()?).join(".mentedb"))
 }
 
-/// Load cloud credentials for the ACTIVE account from ~/.mentedb/cloud.json.
-/// Returns (api_url, token) if a valid active account exists.
+/// Load cloud credentials: MENTEDB_API_KEY env var first, then the ACTIVE
+/// account from ~/.mentedb/cloud.json. Returns (api_url, token).
 ///
-/// The legacy single-key shape is migrated on read (see
+/// The env var must win because plugin installs (the Claude marketplace
+/// plugin) carry the key as environment only and never run `login`; hooks
+/// and the stdio server have to authenticate exactly like the plugin's
+/// bundled .mcp.json server does, or they silently fail open while the MCP
+/// tools work.
+///
+/// The legacy single-key file shape is migrated on read (see
 /// `config::AccountsConfig`), so pre-existing single-key installs keep working.
 /// Also checks the MENTEDB_API_URL env var as an override for the API URL.
 fn load_cloud_credentials() -> Option<(String, String)> {
+    let env_url = || {
+        std::env::var("MENTEDB_API_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+    };
+
+    if let Ok(key) = std::env::var("MENTEDB_API_KEY")
+        && !key.is_empty()
+    {
+        let api_url = env_url().unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
+        return Some((api_url, key));
+    }
+
     let dir = mentedb_dir()?;
     let config = config::load_accounts(&dir).ok()?;
     let (_, account) = config.active_account()?;
@@ -1020,8 +1039,7 @@ fn load_cloud_credentials() -> Option<(String, String)> {
     }
 
     // MENTEDB_API_URL env var takes precedence over the account's cloud_url.
-    let api_url = std::env::var("MENTEDB_API_URL")
-        .ok()
+    let api_url = env_url()
         .or_else(|| account.cloud_url.clone())
         .unwrap_or_else(|| config::DEFAULT_CLOUD_URL.to_string());
 

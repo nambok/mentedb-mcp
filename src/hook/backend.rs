@@ -126,7 +126,7 @@ impl Backend {
     /// including an older gateway or daemon that does not know the call,
     /// returns an empty vec so the hook stays silent and the user's tool
     /// call is never delayed or blocked.
-    pub async fn action_rules(&self, trigger: &str, k: usize) -> Vec<String> {
+    pub async fn action_rules(&self, action: &str, k: usize) -> Vec<String> {
         fn contents(rules: Option<&serde_json::Value>) -> Vec<String> {
             rules
                 .and_then(|r| r.as_array())
@@ -141,7 +141,7 @@ impl Backend {
         match self {
             Backend::Cloud(client) => {
                 let Ok(resp) = client
-                    .call_tool("get_action_rules", json!({ "trigger": trigger, "k": k }))
+                    .call_tool("get_action_rules", json!({ "action": action, "k": k }))
                     .await
                 else {
                     return Vec::new();
@@ -161,7 +161,7 @@ impl Backend {
             #[cfg(feature = "local")]
             Backend::Local(client) => {
                 let Ok(v) = client
-                    .post("/v1/action-rules", json!({ "trigger": trigger, "k": k }))
+                    .post("/v1/action-rules", json!({ "action": action, "k": k }))
                     .await
                 else {
                     return Vec::new();

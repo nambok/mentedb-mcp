@@ -402,34 +402,42 @@ fn pre_tool_use_injects_action_rules_before_commit() {
     // Seed action rules directly in the engine, then close it so the daemon
     // (single writer) can open the same directory.
     {
-        let db = mentedb::MenteDb::open(dir.path()).unwrap();
-        let mut commit_rule = MemoryNode::new(
-            AgentId::nil(),
+        let mut db = mentedb::MenteDb::open(dir.path()).unwrap();
+        // Seed each rule WITH a real embedding from the same model the daemon
+        // queries with, because action recall is semantic now, not a
+        // trigger-tag lookup: the commit rule is reached by the meaning of
+        // "git commit", not a stamped slug. The raw engine open has no
+        // embedder, so wire the same Candle model the server uses. Content is
+        // stated so a commit command lands near the commit rule and far from
+        // the PR rule and the ordinary preference.
+        db.set_embedder(Box::new(
+            mentedb_embedding::CandleEmbeddingProvider::new()
+                .expect("candle model loads for the seed"),
+        ));
+        let seed = |content: &str, ty: MemoryType| {
+            let emb = db.embed_text(content).ok().flatten().unwrap_or_default();
+            db.store(MemoryNode::new(
+                AgentId::nil(),
+                ty,
+                content.to_string(),
+                emb,
+            ))
+            .unwrap();
+        };
+        seed(
+            "when running git commit, never add Co-Authored-By trailers to the commit message",
             MemoryType::Procedural,
-            "never add Co-Authored-By trailers to commits".to_string(),
-            vec![],
         );
-        commit_rule.tags = vec!["trigger:git-commit".to_string()];
-        db.store(commit_rule).unwrap();
-
-        let mut pr_rule = MemoryNode::new(
-            AgentId::nil(),
+        seed(
+            "when opening a pull request, the PR description uses Summary and Verification sections",
             MemoryType::Procedural,
-            "PR descriptions use Summary and Verification sections".to_string(),
-            vec![],
         );
-        pr_rule.tags = vec!["trigger:pr-create".to_string()];
-        db.store(pr_rule).unwrap();
-
-        let ordinary = MemoryNode::new(
-            AgentId::nil(),
+        seed(
+            "the user prefers dark mode in their editor",
             MemoryType::Semantic,
-            "the user prefers dark mode".to_string(),
-            vec![],
         );
-        db.store(ordinary).unwrap();
-        // Persist the indexes (the tag bitmap is written by close, not drop)
-        // so the daemon reopening this directory sees the trigger index.
+        // Persist the indexes (written by close, not drop) so the daemon
+        // reopening this directory sees them.
         db.close().unwrap();
     }
 
@@ -455,36 +463,40 @@ fn pre_tool_use_injects_action_rules_before_commit() {
     assert_eq!(hso["hookEventName"], "PreToolUse");
     let ctx = hso["additionalContext"].as_str().unwrap_or_default();
     assert!(
-        ctx.contains("never add Co-Authored-By trailers"),
-        "commit rule must be injected, got: {ctx}"
+        ctx.contains("Co-Authored-By"),
+        "commit rule must be recalled by meaning for a commit command, got: {ctx}"
     );
     assert!(
         !ctx.contains("Summary and Verification"),
-        "pr-create rule must not fire on a commit, got: {ctx}"
+        "the PR rule is a different action and must not lead for a commit, got: {ctx}"
     );
     assert!(
         !ctx.contains("dark mode"),
-        "ordinary memories must not enter the action channel, got: {ctx}"
+        "an ordinary preference must not surface as an action rule, got: {ctx}"
     );
     assert!(
         hso.get("permissionDecision").is_none(),
         "the hook must never emit a permission decision"
     );
 
-    // Non-commit git commands stay silent.
+    // A clearly unrelated action surfaces no governing rule. (Fine
+    // distinctions between sibling commands, git log vs git commit, are
+    // embedder-quality dependent and covered deterministically by the engine's
+    // controlled-embedding action_rules tests; here we assert the robust case:
+    // an action with no bearing on the stored rules stays silent.)
     let out = run_hook(
         dir.path(),
         "pre-tool-use",
         &serde_json::json!({
             "session_id": "sess-pre",
             "tool_name": "Bash",
-            "tool_input": { "command": "git log --oneline -3" },
+            "tool_input": { "command": "ls -la /tmp/project" },
             "hook_event_name": "PreToolUse",
         }),
     );
     assert!(
         out.trim().is_empty(),
-        "git log must not trigger rules: {out}"
+        "an unrelated command must not surface action rules: {out}"
     );
 
     // Non-Bash tools stay silent even if their input mentions git.

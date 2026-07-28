@@ -231,7 +231,13 @@ async fn action_rules(
     // Local single-user connector: no per-agent or per-user isolation,
     // mirror the injection-context route's global owner scope.
     let rules = db
-        .recall_for_action(&embedding, None, None, req.k.unwrap_or(6).min(12))
+        .recall_for_action(
+            &embedding,
+            Some(req.action.as_str()),
+            None,
+            None,
+            req.k.unwrap_or(6).min(12),
+        )
         .map_err(|e| {
             tracing::error!(error = %e, "action rules recall failed");
             StatusCode::INTERNAL_SERVER_ERROR

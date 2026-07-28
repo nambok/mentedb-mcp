@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -728,9 +728,9 @@ checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 
 [[package]]
 name = "either"
-version = "1.16.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "encode_unicode"
@@ -1662,9 +1662,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4d7ea3c7e6faba81d24b0e9a4134762d350803287faf19aeb4811c6d7a99001"
+checksum = "faf20df70210aa9425e9de42fccafd6481bce4e50203da79706e772e2c3e621b"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-consolidation",
@@ -1686,9 +1686,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a42829b3ef9a1ffe28863bed303253702ce10309bb200d34310d018e6410119"
+checksum = "5ee2132a185d7f542d7390398c30e2043a85dca4ae9833cb8d86893e43321797"
 dependencies = [
  "ahash",
  "crossbeam",
@@ -1703,9 +1703,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-consolidation"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3de26313c974597786076fce8b8e4d5edc8f46e8d08cfc78848e41686d6fb8a9"
+checksum = "a070d6ed4131ee1021878fcf059b63d15a1c32f0e9a6127fe6ec03078e81ef05"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1716,9 +1716,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-context"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f9b0766c7de284b5cb2dc83e06091cb8ff8d5a5a70e7965d319d0389d73fe7"
+checksum = "f64c706c234e73f498ce2e9c8d35d383784509c0deaacef9cd50160a1897a895"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1730,9 +1730,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1a5e50cd8aced7d012d7ce3d7234c34eaa76d662d2e3422ebbcf604acfee88f"
+checksum = "dba7a6877edddbbe5958fb1764b45ca0c8786225e663c5483f96f65eec4964db"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1747,9 +1747,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b33e8ba22b2bd47a048d73fe3779eb9803192aaad321c8fe0f9bd832f8f0e792"
+checksum = "ffe14f2001119bb04b1eeaa3b49174d6f49005d6770a03cfe7d9926284427715"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -1766,9 +1766,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc7c454c9c650da634a69f708cb655e41a80ce6cbf36e7771096c4829afa5082"
+checksum = "d4cad5b489801989550e44299be2bdff53bb0465c1861483f40817cc0e6e114d"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-core",
@@ -1784,9 +1784,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7b5597028c598d0b7005c9a40107ed1b28fd1c63651aabc143eb25e38fc8792"
+checksum = "4d51e8412b96b5a1cfd92a81b7ad0711986b226a1cd407f6d6b4b97166e19e51"
 dependencies = [
  "ahash",
  "bincode",
@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d8fceaaf03ca106ac867bc65c543f702ca388a7c101894b1cdab39f2c75dd9a"
+checksum = "8d3b19ea3005351c440d6c29c4df7ef8cb37769f41748cd1cae2f0f97b13583e"
 dependencies = [
  "ahash",
  "bincode",
@@ -1851,9 +1851,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f58ebfdab3e66149337477854e7ab241ff3bce499c207ebb091cfbaedf8ab3a1"
+checksum = "a258e06276986d623442ce0a3def291e446b7d1f6dcb1752984a04a3b9bf88c2"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1864,9 +1864,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.32.0"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a26bb40ec12186f91209f77732b3baf0fd3313e0a1c6f3edf7a3e9e70629c981"
+checksum = "c72f6ab4147d5daced7b0da008679a2121050cebafbf8ef5b74ae06ba26f50c9"
 dependencies = [
  "ahash",
  "bincode",
@@ -2699,9 +2699,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
+checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
 dependencies = [
  "chrono",
  "dyn-clone",
@@ -2713,14 +2713,14 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d115b50f4aaeea07e79c1912f645c7513d81715d0420f8bc77a18c6260b307f"
+checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -2790,13 +2790,13 @@ dependencies = [
 
 [[package]]
 name = "serde_derive_internals"
-version = "0.29.1"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]

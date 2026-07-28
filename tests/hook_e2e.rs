@@ -10,6 +10,16 @@ use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_mentedb-mcp");
 
+/// Each test here spawns a daemon that loads a local embedding model, which is
+/// far too heavy to run several at once: the parallel default thrashes loading
+/// N models and daemons miss their health deadline. Serialize the suite so
+/// exactly one daemon warms at a time (they all pass serially).
+static E2E_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    E2E_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(serde::Deserialize)]
 struct DaemonInfo {
     port: u16,
@@ -142,6 +152,7 @@ fn spawn_daemon(data_dir: &Path) -> DaemonGuard {
 
 #[test]
 fn daemon_serves_turn_and_context_with_auth() {
+    let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
     let info = wait_for_daemon(dir.path(), Duration::from_secs(120));
@@ -199,6 +210,7 @@ fn daemon_serves_turn_and_context_with_auth() {
 
 #[test]
 fn hook_full_turn_loop_with_autospawn() {
+    let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     // No daemon started: the first hook call must auto-spawn it.
     let guard = DaemonGuard {
@@ -307,6 +319,7 @@ fn hook_full_turn_loop_with_autospawn() {
 
 #[test]
 fn post_tool_use_captures_action_live() {
+    let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
     let info = wait_for_daemon(dir.path(), Duration::from_secs(120));
@@ -366,6 +379,7 @@ fn post_tool_use_captures_action_live() {
 
 #[test]
 fn hook_tolerates_garbage_input() {
+    let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     // Malformed JSON, no daemon, no cloud: must still exit 0 with no output.
     let mut child = Command::new(BIN)
@@ -394,6 +408,7 @@ fn hook_tolerates_garbage_input() {
 
 #[test]
 fn pre_tool_use_injects_action_rules_before_commit() {
+    let _serial = serial();
     use mentedb::prelude::*;
     use mentedb_core::types::AgentId;
 
@@ -515,6 +530,7 @@ fn pre_tool_use_injects_action_rules_before_commit() {
 
 #[test]
 fn pre_tool_use_is_silent_with_no_rules_and_tolerates_garbage() {
+    let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
     wait_for_daemon(dir.path(), Duration::from_secs(120));
@@ -544,6 +560,7 @@ fn pre_tool_use_is_silent_with_no_rules_and_tolerates_garbage() {
 
 #[test]
 fn session_start_self_updates_hook_registrations() {
+    let _serial = serial();
     // A settings file written by an older version (five events, no
     // pre-tool-use) must gain the missing hook on session start, while a
     // config dir that never ran setup stays untouched.

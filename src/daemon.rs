@@ -201,14 +201,19 @@ struct InjectionContextRequest {
 
 #[derive(Deserialize)]
 struct ActionRulesRequest {
-    trigger: String,
+    /// The meaning of the action about to happen (the command, the intent).
+    /// `trigger` is accepted as a back-compat alias for older hooks.
+    #[serde(default, alias = "trigger")]
+    action: String,
     #[serde(default)]
     k: Option<usize>,
 }
 
-/// Standing rules for a class of agent actions (memories tagged
-/// `trigger:<action>`), for the pre-tool hook. Read only, no embedding, no
-/// LLM: a tag-index recall so it stays well inside the hook's time budget.
+/// The memories that bear on an action the agent is about to take, for the
+/// pre-tool hook. The action's meaning is embedded and recalled semantically
+/// (governing memories re-ranked by type), not looked up by a trigger tag, so
+/// any action matches, not a fixed vocabulary. One embed is the cost; the hook
+/// bounds it with a timeout and fails open.
 async fn action_rules(
     State(state): State<DaemonState>,
     headers: HeaderMap,
@@ -218,10 +223,21 @@ async fn action_rules(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let db = state.server.db_ref();
+    let embedding = db
+        .embed_text(&req.action)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     // Local single-user connector: no per-agent or per-user isolation,
     // mirror the injection-context route's global owner scope.
     let rules = db
-        .recall_for_action(&req.trigger, None, None, req.k.unwrap_or(6).min(12))
+        .recall_for_action(
+            &embedding,
+            Some(req.action.as_str()),
+            None,
+            None,
+            req.k.unwrap_or(6).min(12),
+        )
         .map_err(|e| {
             tracing::error!(error = %e, "action rules recall failed");
             StatusCode::INTERNAL_SERVER_ERROR

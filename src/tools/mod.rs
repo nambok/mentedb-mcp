@@ -29,6 +29,29 @@ use mentedb_core::{MemoryEdge, MemoryNode};
 use mentedb_embedding::CandleEmbeddingProvider;
 use mentedb_embedding::HashEmbeddingProvider;
 use mentedb_embedding::provider::EmbeddingProvider;
+
+/// Shares one embedding model instance between the server (which embeds text
+/// before storing) and the engine db (whose own embed-and-recall paths, the
+/// injection context and action recall the daemon serves, call `embed_text`).
+/// Without this the db opens with no embedder, so those engine-side paths
+/// embed nothing and recall degrades to keyword or returns empty. One model,
+/// two owners, via a cheap Arc delegate.
+struct SharedEmbedder(Arc<dyn EmbeddingProvider>);
+
+impl EmbeddingProvider for SharedEmbedder {
+    fn embed(&self, text: &str) -> mentedb_core::error::MenteResult<Vec<f32>> {
+        self.0.embed(text)
+    }
+    fn embed_batch(&self, texts: &[&str]) -> mentedb_core::error::MenteResult<Vec<Vec<f32>>> {
+        self.0.embed_batch(texts)
+    }
+    fn dimensions(&self) -> usize {
+        self.0.dimensions()
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+}
 use mentedb_extraction::{
     ExtractionConfig, ExtractionPipeline, MockExtractionProvider, ProcessedExtractionResult,
 };
@@ -80,26 +103,38 @@ pub struct MenteDbServer {
 
 impl MenteDbServer {
     pub fn new(db: MenteDb, config: ServerConfig) -> Self {
+        // MENTEDB_FORCE_HASH_EMBEDDINGS skips the Candle model entirely and uses
+        // the deterministic hash embedder. It exists for tests and CI: loading
+        // (and, on a cold runner, downloading) the local model is slow and
+        // flaky, and forcing hash makes the hook e2e suite fast, reproducible,
+        // and a direct exercise of the BM25 keyword recall path.
         let (embedding_provider, using_hash_fallback): (Arc<dyn EmbeddingProvider>, bool) =
-            match CandleEmbeddingProvider::new() {
-                Ok(provider) => {
-                    tracing::info!(
-                        model = provider.model_name(),
-                        dimensions = provider.dimensions(),
-                        "Using local Candle embeddings"
-                    );
-                    (Arc::new(provider), false)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to load Candle model, falling back to hash embeddings. \
-                         Search results will be unreliable."
-                    );
-                    (
-                        Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
-                        true,
-                    )
+            if std::env::var("MENTEDB_FORCE_HASH_EMBEDDINGS").is_ok() {
+                (
+                    Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
+                    true,
+                )
+            } else {
+                match CandleEmbeddingProvider::new() {
+                    Ok(provider) => {
+                        tracing::info!(
+                            model = provider.model_name(),
+                            dimensions = provider.dimensions(),
+                            "Using local Candle embeddings"
+                        );
+                        (Arc::new(provider), false)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to load Candle model, falling back to hash embeddings. \
+                             Search results will be unreliable."
+                        );
+                        (
+                            Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
+                            true,
+                        )
+                    }
                 }
             };
         let full_tools = config.full_tools;
@@ -203,6 +238,12 @@ impl MenteDbServer {
                 "Slim tool mode: exposing only essential tools"
             );
         }
+
+        // Wire the same embedding model into the db so the engine's own
+        // embed-and-recall paths (the daemon's injection context and action
+        // recall) embed with the real model instead of the db's empty default.
+        let mut db = db;
+        db.set_embedder(Box::new(SharedEmbedder(embedding_provider.clone())));
 
         Self {
             db: Arc::new(db),

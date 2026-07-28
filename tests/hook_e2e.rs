@@ -116,6 +116,10 @@ fn run_hook(data_dir: &Path, event: &str, payload: &serde_json::Value) -> String
         // real Claude Code settings; the self-update path has its own test
         // with an isolated home.
         .env("MENTEDB_HOOK_NO_SELF_UPDATE", "1")
+        // Deterministic, fast embedder: skip the Candle model download so the
+        // suite is reproducible and exercises the BM25 keyword recall path.
+        // The auto-spawned daemon inherits this from the hook process.
+        .env("MENTEDB_FORCE_HASH_EMBEDDINGS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -139,6 +143,7 @@ fn run_hook(data_dir: &Path, event: &str, payload: &serde_json::Value) -> String
 fn spawn_daemon(data_dir: &Path) -> DaemonGuard {
     let child = Command::new(BIN)
         .args(["--data-dir", data_dir.to_str().unwrap(), "daemon"])
+        .env("MENTEDB_FORCE_HASH_EMBEDDINGS", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -418,17 +423,13 @@ fn pre_tool_use_injects_action_rules_before_commit() {
     // (single writer) can open the same directory.
     {
         let mut db = mentedb::MenteDb::open(dir.path()).unwrap();
-        // Seed each rule WITH a real embedding from the same model the daemon
-        // queries with, because action recall is semantic now, not a
-        // trigger-tag lookup: the commit rule is reached by the meaning of
-        // "git commit", not a stamped slug. The raw engine open has no
-        // embedder, so wire the same Candle model the server uses. Content is
-        // stated so a commit command lands near the commit rule and far from
-        // the PR rule and the ordinary preference.
-        db.set_embedder(Box::new(
-            mentedb_embedding::CandleEmbeddingProvider::new()
-                .expect("candle model loads for the seed"),
-        ));
+        // Seed with the SAME embedder the daemon uses under the test's forced
+        // hash mode (dim 128), so the stored vectors and the daemon's query
+        // vectors share a space. The commit rule is then reached by the BM25
+        // keyword path (the daemon passes the action text), which is the
+        // robustness this suite verifies: action recall works even when the
+        // embedder is the non-semantic hash fallback.
+        db.set_embedder(Box::new(mentedb_embedding::HashEmbeddingProvider::new(128)));
         let seed = |content: &str, ty: MemoryType| {
             let emb = db.embed_text(content).ok().flatten().unwrap_or_default();
             db.store(MemoryNode::new(

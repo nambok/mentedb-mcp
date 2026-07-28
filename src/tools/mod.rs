@@ -103,26 +103,38 @@ pub struct MenteDbServer {
 
 impl MenteDbServer {
     pub fn new(db: MenteDb, config: ServerConfig) -> Self {
+        // MENTEDB_FORCE_HASH_EMBEDDINGS skips the Candle model entirely and uses
+        // the deterministic hash embedder. It exists for tests and CI: loading
+        // (and, on a cold runner, downloading) the local model is slow and
+        // flaky, and forcing hash makes the hook e2e suite fast, reproducible,
+        // and a direct exercise of the BM25 keyword recall path.
         let (embedding_provider, using_hash_fallback): (Arc<dyn EmbeddingProvider>, bool) =
-            match CandleEmbeddingProvider::new() {
-                Ok(provider) => {
-                    tracing::info!(
-                        model = provider.model_name(),
-                        dimensions = provider.dimensions(),
-                        "Using local Candle embeddings"
-                    );
-                    (Arc::new(provider), false)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to load Candle model, falling back to hash embeddings. \
-                         Search results will be unreliable."
-                    );
-                    (
-                        Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
-                        true,
-                    )
+            if std::env::var("MENTEDB_FORCE_HASH_EMBEDDINGS").is_ok() {
+                (
+                    Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
+                    true,
+                )
+            } else {
+                match CandleEmbeddingProvider::new() {
+                    Ok(provider) => {
+                        tracing::info!(
+                            model = provider.model_name(),
+                            dimensions = provider.dimensions(),
+                            "Using local Candle embeddings"
+                        );
+                        (Arc::new(provider), false)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to load Candle model, falling back to hash embeddings. \
+                             Search results will be unreliable."
+                        );
+                        (
+                            Arc::new(HashEmbeddingProvider::new(config.embedding_dim)),
+                            true,
+                        )
+                    }
                 }
             };
         let full_tools = config.full_tools;

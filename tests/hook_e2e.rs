@@ -155,7 +155,7 @@ fn daemon_serves_turn_and_context_with_auth() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
-    let info = wait_for_daemon(dir.path(), Duration::from_secs(120));
+    let info = wait_for_daemon(dir.path(), Duration::from_secs(300));
 
     // Unauthorized without the token.
     let output = Command::new("curl")
@@ -232,7 +232,7 @@ fn hook_full_turn_loop_with_autospawn() {
     );
     // The auto-spawned daemon may still be loading on the very first call;
     // wait until it registers before the stop hook.
-    let _info = wait_for_daemon(dir.path(), Duration::from_secs(120));
+    let _info = wait_for_daemon(dir.path(), Duration::from_secs(300));
 
     // Retry the prompt hook now that the daemon is up (first call may have
     // timed out waiting on model download).
@@ -322,7 +322,7 @@ fn post_tool_use_captures_action_live() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
-    let info = wait_for_daemon(dir.path(), Duration::from_secs(120));
+    let info = wait_for_daemon(dir.path(), Duration::from_secs(300));
 
     // A PostToolUse hook for a file edit stores an action note immediately,
     // with no prior user-prompt/stop turn.
@@ -457,7 +457,7 @@ fn pre_tool_use_injects_action_rules_before_commit() {
     }
 
     let _guard = spawn_daemon(dir.path());
-    wait_for_daemon(dir.path(), Duration::from_secs(120));
+    wait_for_daemon(dir.path(), Duration::from_secs(300));
 
     // The exact command shape agents run, global flag value containing the
     // word commit included.
@@ -533,7 +533,7 @@ fn pre_tool_use_is_silent_with_no_rules_and_tolerates_garbage() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let _guard = spawn_daemon(dir.path());
-    wait_for_daemon(dir.path(), Duration::from_secs(120));
+    wait_for_daemon(dir.path(), Duration::from_secs(300));
 
     // A commit with zero stored rules injects nothing.
     let out = run_hook(

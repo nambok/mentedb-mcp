@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.39](https://github.com/nambok/mentedb-mcp/compare/v0.5.38...v0.5.39) - 2026-07-28
+
+### Added
+
+- action rules by meaning, delete the hardcoded command classifier ([#176](https://github.com/nambok/mentedb-mcp/pull/176))
+
 ## [0.5.38](https://github.com/nambok/mentedb-mcp/compare/v0.5.37...v0.5.38) - 2026-07-28
 
 ### Added

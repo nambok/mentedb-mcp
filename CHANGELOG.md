@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.40](https://github.com/nambok/mentedb-mcp/compare/v0.5.39...v0.5.40) - 2026-10-08
+
+### Fixed
+
+- give hook recall a hard deadline so a hung backend never holds the prompt ([#216](https://github.com/nambok/mentedb-mcp/pull/216))
+
 ## [0.5.39](https://github.com/nambok/mentedb-mcp/compare/v0.5.38...v0.5.39) - 2026-07-28
 
 ### Added

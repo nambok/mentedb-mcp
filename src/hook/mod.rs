@@ -48,6 +48,21 @@ pub enum HookEvent {
 /// skipped for this call and the command runs untouched.
 const ACTION_RULES_BUDGET_MS: u64 = 1500;
 
+/// Hard deadline for recall in the UserPromptSubmit hook. The client kills a
+/// hook at 30s and discards its output, and `npx` startup spends part of that
+/// before this process runs, so recall must give up long before then and let
+/// the prompt through. MENTEDB_HOOK_RECALL_BUDGET_MS overrides it.
+const USER_PROMPT_BUDGET_MS: u64 = 8_000;
+
+fn user_prompt_budget() -> std::time::Duration {
+    let ms = std::env::var("MENTEDB_HOOK_RECALL_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .unwrap_or(USER_PROMPT_BUDGET_MS);
+    std::time::Duration::from_millis(ms)
+}
+
 /// Rules requested per action; mirrors the server side default and keeps the
 /// injected block small.
 const ACTION_RULES_MAX: usize = 6;
@@ -231,42 +246,62 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
                 _ => prompt.clone(),
             };
 
-            let backend = Backend::resolve(data_dir, force_local).await?;
-
-            // Native path: the engine owns selection (session exclusion,
-            // ledger, knee, MMR, quotas, pinned bypass). Fallback: raw
-            // recall shaped by the local heuristic filter, for backends
-            // that predate the injection API.
-            let native = backend
-                .injection_context(&query, &session_id, &state.injected)
-                .await;
-            let (ctx, injected_ids) = match native {
-                Some(ctx) => {
-                    record_auth_state(data_dir, None);
-                    let ids: Vec<String> = ctx["memories"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-                                .map(str::to_string)
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (Some(ctx), ids)
-                }
-                None => match backend.context(&query).await {
-                    Ok(c) => {
+            // Recall runs under a hard deadline well inside the client's own
+            // hook limit. A slow or unreachable backend must never hold the
+            // user's prompt: past the budget the prompt goes through with no
+            // recalled context (the turn itself is still captured at Stop).
+            let recall = async {
+                let backend = Backend::resolve(data_dir, force_local).await?;
+                // Native path: the engine owns selection (session exclusion,
+                // ledger, knee, MMR, quotas, pinned bypass). Fallback: raw
+                // recall shaped by the local heuristic filter, for backends
+                // that predate the injection API.
+                let native = backend
+                    .injection_context(&query, &session_id, &state.injected)
+                    .await;
+                anyhow::Ok(match native {
+                    Some(ctx) => {
                         record_auth_state(data_dir, None);
-                        let (filtered, ids) =
-                            filter_for_injection(&c, &state.injected, now_micros());
-                        (Some(filtered), ids)
+                        let ids: Vec<String> = ctx["memories"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                                    .map(str::to_string)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        (Some(ctx), ids)
                     }
-                    Err(e) => {
-                        record_auth_state(data_dir, Some(&e));
-                        tracing::warn!(error = %e, "context recall failed");
-                        (None, Vec::new())
-                    }
-                },
+                    None => match backend.context(&query).await {
+                        Ok(c) => {
+                            record_auth_state(data_dir, None);
+                            let (filtered, ids) =
+                                filter_for_injection(&c, &state.injected, now_micros());
+                            (Some(filtered), ids)
+                        }
+                        Err(e) => {
+                            record_auth_state(data_dir, Some(&e));
+                            tracing::warn!(error = %e, "context recall failed");
+                            (None, Vec::new())
+                        }
+                    },
+                })
+            };
+            let (ctx, injected_ids) = match tokio::time::timeout(user_prompt_budget(), recall).await
+            {
+                Ok(Ok(found)) => found,
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "context recall failed");
+                    (None, Vec::new())
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        budget_ms = user_prompt_budget().as_millis() as u64,
+                        "context recall over budget, prompt sent without recalled context"
+                    );
+                    (None, Vec::new())
+                }
             };
 
             let mut text = String::new();
@@ -404,23 +439,33 @@ async fn run_inner(event: HookEvent, data_dir: &Path, force_local: bool) -> anyh
             // reports a purely local settings.json change and is useful even
             // when memory is unreachable. So a resolve or context failure just
             // means no recalled context, not an early return.
-            let ctx = match Backend::resolve(data_dir, force_local).await {
-                Ok(backend) => match backend.session_context().await {
-                    Ok(c) => {
-                        record_auth_state(data_dir, None);
-                        Some(c)
-                    }
+            // Same hard deadline as recall: a hung backend must not hold the
+            // session start either.
+            let fetch = async {
+                match Backend::resolve(data_dir, force_local).await {
+                    Ok(backend) => match backend.session_context().await {
+                        Ok(c) => {
+                            record_auth_state(data_dir, None);
+                            Some(c)
+                        }
+                        Err(e) => {
+                            record_auth_state(data_dir, Some(&e));
+                            tracing::warn!(error = %e, "session context failed");
+                            None
+                        }
+                    },
                     Err(e) => {
-                        record_auth_state(data_dir, Some(&e));
-                        tracing::warn!(error = %e, "session context failed");
+                        tracing::warn!(error = %e, "session backend resolve failed");
                         None
                     }
-                },
-                Err(e) => {
-                    tracing::warn!(error = %e, "session backend resolve failed");
-                    None
                 }
             };
+            let ctx = tokio::time::timeout(user_prompt_budget(), fetch)
+                .await
+                .unwrap_or_else(|_| {
+                    tracing::warn!("session context over budget, session starts without it");
+                    None
+                });
             let mut text = ctx
                 .as_ref()
                 .and_then(format_session_context)

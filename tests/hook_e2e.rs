@@ -664,3 +664,67 @@ fn session_start_self_updates_hook_registrations() {
         "no repeat notice: {out}"
     );
 }
+
+/// A backend that accepts the connection and never answers (a hung server)
+/// must not hold the user's prompt: the hook gives up at its recall budget,
+/// exits 0, and the prompt goes through, long before the client's 30s hook
+/// kill that discards everything.
+#[test]
+fn user_prompt_fails_open_fast_when_cloud_hangs() {
+    let _guard = serial();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hold = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming().take(4).flatten() {
+            held.push(stream);
+        }
+        std::thread::sleep(Duration::from_secs(30));
+        drop(held);
+    });
+
+    let home = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    let payload = serde_json::json!({
+        "session_id": "hang-test",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "how do I deploy the gateway",
+    });
+    let started = std::time::Instant::now();
+    let mut child = Command::new(BIN)
+        .args([
+            "--data-dir",
+            data_dir.path().to_str().unwrap(),
+            "hook",
+            "user-prompt",
+        ])
+        .env("HOME", home.path())
+        .env("MENTEDB_API_KEY", "test-key")
+        .env("MENTEDB_API_URL", format!("http://127.0.0.1:{port}"))
+        .env("MENTEDB_HOOK_RECALL_BUDGET_MS", "1500")
+        .env("MENTEDB_HOOK_NO_SELF_UPDATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to run hook");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("hook did not exit");
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "hook must exit 0, got {:?}",
+        output.status
+    );
+    assert!(
+        elapsed < Duration::from_secs(6),
+        "hook held the prompt for {elapsed:?} against a hung backend"
+    );
+    drop(hold);
+}

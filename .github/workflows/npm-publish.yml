@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -99,6 +100,11 @@ jobs:
     name: Publish to npm
     needs: build
     runs-on: ubuntu-latest
+    # npm trusted publishing: the registry accepts this job's OIDC identity,
+    # so no long-lived token is stored in the repo.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
 
@@ -106,6 +112,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      - name: Use an npm with trusted publishing support
+        run: npm install -g npm@latest
 
       - name: Sync versions from Cargo.toml
         run: node scripts/sync-npm-version.js
@@ -151,19 +160,18 @@ jobs:
       - name: Copy README to npm package
         run: cp README.md npm/mentedb-mcp/README.md
 
-      - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish packages
         run: |
-          for pkg in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-            cd npm/$pkg
-            npm publish --access public || true
-            cd ../..
+          # Platform packages first so the main package never points at a missing binary.
+          # Skip only a version that is genuinely already on the registry; any other
+          # failure (an auth error answers 404) must fail the job.
+          for pkg in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64 mentedb-mcp; do
+            (cd npm/$pkg && npm publish --access public 2>publish.err) || {
+              cat npm/$pkg/publish.err
+              if grep -qE "EPUBLISHCONFLICT|cannot publish over|previously published" npm/$pkg/publish.err; then
+                echo "$pkg: already published, skipping"
+              else
+                exit 1
+              fi
+            }
           done
-
-      - name: Publish main package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          cd npm/mentedb-mcp
-          npm publish --access public || echo "Already published, skipping"

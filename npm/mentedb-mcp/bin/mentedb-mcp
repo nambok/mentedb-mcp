@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
+const zlib = require("zlib");
 
 const PLATFORMS = {
   "darwin-arm64": "@mentedb/mcp-darwin-arm64",
@@ -35,6 +36,33 @@ function installedBinary(pkg) {
 // cache an install with no binary. Instead of failing every run until that
 // cache expires, fetch the exact platform package from the registry, verify it
 // against the registry's integrity hash, and keep it under ~/.mentedb/bin.
+// Read one regular file out of a gzipped tar held in memory. Done in process so
+// the launcher never depends on which `tar` is on PATH: Git Bash's GNU tar on
+// Windows reads `C:\...` as a remote host and fails.
+function extractFromTgz(tgz, wanted) {
+  const tar = zlib.gunzipSync(tgz);
+  const field = (hdr, start, len) =>
+    hdr.toString("utf8", start, start + len).replace(/\0[\s\S]*$/, "");
+  let off = 0;
+  while (off + 512 <= tar.length) {
+    const hdr = tar.subarray(off, off + 512);
+    if (hdr.every((b) => b === 0)) {
+      break;
+    }
+    const name = field(hdr, 0, 100);
+    const prefix = field(hdr, 345, 155);
+    const size = parseInt(field(hdr, 124, 12).trim() || "0", 8);
+    const type = String.fromCharCode(hdr[156]);
+    const full = prefix ? `${prefix}/${name}` : name;
+    off += 512;
+    if ((type === "0" || type === "\0") && full === wanted) {
+      return tar.subarray(off, off + size);
+    }
+    off += Math.ceil(size / 512) * 512;
+  }
+  return null;
+}
+
 async function fetchBinary(pkg, version) {
   const short = pkg.split("/")[1];
   const root = path.join(os.homedir(), ".mentedb", "bin", `${short}-${version}`);
@@ -62,11 +90,12 @@ async function fetchBinary(pkg, version) {
   fs.mkdirSync(path.dirname(root), { recursive: true });
   const tmp = fs.mkdtempSync(`${root}.tmp-`);
   try {
-    const file = path.join(tmp, "pkg.tgz");
-    fs.writeFileSync(file, tgz);
-    execFileSync("tar", ["-xzf", file, "-C", tmp]);
-    fs.chmodSync(path.join(tmp, "package", "bin", binName), 0o755);
-    fs.rmSync(file);
+    const bin = extractFromTgz(tgz, `package/bin/${binName}`);
+    if (!bin) {
+      throw new Error(`${pkg}@${version} has no bin/${binName}`);
+    }
+    fs.mkdirSync(path.join(tmp, "package", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "package", "bin", binName), bin, { mode: 0o755 });
     try {
       fs.renameSync(tmp, root);
     } catch (e) {

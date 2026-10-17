@@ -667,38 +667,96 @@ fn spool_notice(data_dir: &Path) -> Option<String> {
 /// still fail (and everything after the first failure, to preserve order) go
 /// back into the spool.
 async fn flush_spool(data_dir: &Path, backend: &Backend) {
-    // The flush is bounded so a backlog never dominates a hook: at most
-    // MAX_FLUSH_PER_CALL entries and at most FLUSH_BUDGET of wall-clock per
-    // invocation. Whatever is not reached stays spooled for the next hook, so a
-    // large backlog drains over several hooks instead of blocking one prompt for
-    // tens of seconds (each store is a full round trip; N of them was the hang).
-    const MAX_FLUSH_PER_CALL: usize = 25;
-    const FLUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
-
     let entries = spool::take_all(data_dir);
     if entries.is_empty() {
         return;
     }
+    let failed = flush_entries(entries, backend).await;
+    if failed.is_empty() {
+        tracing::info!("offline spool fully flushed");
+    } else {
+        tracing::warn!(retained = failed.len(), "spool flush incomplete");
+        spool::restore(data_dir, &failed);
+    }
+}
+
+/// At most this many network calls per flush, so a backlog never dominates a
+/// hook; whatever is not reached stays spooled, in order, for the next hook.
+const MAX_FLUSH_CALLS: usize = 10;
+/// Wall clock budget per flush; no new call starts after it.
+const FLUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
+/// Consecutive notes sent together in one `store_memories` batch.
+const NOTE_BATCH: usize = 50;
+/// A batch does one write on the server however many notes it carries, but
+/// embeds each one, so it gets more time than a single store.
+const NOTE_BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const SINGLE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Send spooled entries in order and return the ones not delivered (the
+/// first failure and everything after it). Runs of consecutive notes go up
+/// as one batch, which is what drains a backlog of hundreds in a few calls
+/// instead of one round trip, embed and disk sync per note.
+async fn flush_entries(
+    entries: Vec<serde_json::Value>,
+    backend: &Backend,
+) -> Vec<serde_json::Value> {
     let start = std::time::Instant::now();
-    let mut processed = 0usize;
-    let mut failed: Vec<serde_json::Value> = Vec::new();
-    let mut hit_failure = false;
-    for e in entries {
-        // Stop making network calls once we fail, reach the item cap, or exceed
-        // the time budget; everything remaining is requeued in order.
-        if hit_failure || processed >= MAX_FLUSH_PER_CALL || start.elapsed() >= FLUSH_BUDGET {
-            failed.push(e);
+    let mut calls = 0usize;
+    let mut rest = std::collections::VecDeque::from(entries);
+    while let Some(e) = rest.pop_front() {
+        if calls >= MAX_FLUSH_CALLS || start.elapsed() >= FLUSH_BUDGET {
+            rest.push_front(e);
+            break;
+        }
+        let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        if kind == "note" {
+            // Gather this note and the notes right after it.
+            let mut batch = vec![e];
+            while batch.len() < NOTE_BATCH
+                && rest
+                    .front()
+                    .and_then(|n| n.get("kind"))
+                    .and_then(|k| k.as_str())
+                    == Some("note")
+            {
+                batch.push(rest.pop_front().expect("front checked"));
+            }
+            let notes: Vec<(String, Option<String>)> = batch
+                .iter()
+                .filter_map(|n| {
+                    let content = n.get("content").and_then(|v| v.as_str())?;
+                    (!content.is_empty()).then(|| {
+                        (
+                            content.to_string(),
+                            n.get("project")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                        )
+                    })
+                })
+                .collect();
+            if notes.is_empty() {
+                continue; // malformed, drop
+            }
+            calls += 1;
+            let ok = tokio::time::timeout(NOTE_BATCH_TIMEOUT, backend.store_notes(&notes))
+                .await
+                .is_ok_and(|r| r.is_ok());
+            if !ok {
+                batch.extend(rest);
+                return batch;
+            }
             continue;
         }
-        processed += 1;
-        let ok = match e.get("kind").and_then(|v| v.as_str()) {
-            Some("turn") => {
+        calls += 1;
+        let ok = match kind {
+            "turn" => {
                 let user = e.get("user_message").and_then(|v| v.as_str()).unwrap_or("");
                 if user.is_empty() {
                     true // malformed, drop
                 } else {
                     tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
+                        SINGLE_CALL_TIMEOUT,
                         backend.store_turn(
                             user,
                             e.get("assistant_response")
@@ -712,30 +770,10 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                         ),
                     )
                     .await
-                    .map(|r| r.is_ok())
-                    .unwrap_or(false)
+                    .is_ok_and(|r| r.is_ok())
                 }
             }
-            Some("note") => {
-                let content = e.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                if content.is_empty() {
-                    true
-                } else {
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        backend.store_note(
-                            content,
-                            e.get("project")
-                                .and_then(|v| v.as_str())
-                                .map(str::to_string),
-                        ),
-                    )
-                    .await
-                    .map(|r| r.is_ok())
-                    .unwrap_or(false)
-                }
-            }
-            Some("injection_outcome") => {
+            "injection_outcome" => {
                 let shown: Vec<String> = e
                     .get("shown_ids")
                     .and_then(|v| v.as_array())
@@ -752,7 +790,7 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
                 // Best effort attention signal; bounded so it never blocks the
                 // queue, and always dropped (it is non-critical, never requeued).
                 let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(3),
+                    SINGLE_CALL_TIMEOUT,
                     backend.record_injection_outcome(&shown, text),
                 )
                 .await;
@@ -761,16 +799,11 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
             _ => true,
         };
         if !ok {
-            hit_failure = true;
-            failed.push(e);
+            rest.push_front(e);
+            break;
         }
     }
-    if failed.is_empty() {
-        tracing::info!("offline spool fully flushed");
-    } else {
-        tracing::warn!(retained = failed.len(), "spool flush incomplete");
-        spool::restore(data_dir, &failed);
-    }
+    rest.into_iter().collect()
 }
 
 /// Bash command prefixes that only read state and are not worth remembering.

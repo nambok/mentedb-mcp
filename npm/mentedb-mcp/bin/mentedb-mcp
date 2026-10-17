@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const { execFileSync } = require("child_process");
+const crypto = require("crypto");
+const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
@@ -12,48 +14,108 @@ const PLATFORMS = {
   "win32-x64": "@mentedb/mcp-win32-x64",
 };
 
-function getBinaryPath() {
-  const platformKey = `${process.platform}-${process.arch}`;
-  const pkg = PLATFORMS[platformKey];
+const platformKey = `${process.platform}-${process.arch}`;
+const binName = process.platform === "win32" ? "mentedb-mcp.exe" : "mentedb-mcp";
 
-  if (!pkg) {
-    console.error(
-      `Unsupported platform: ${process.platform}-${process.arch}\n` +
-      `Supported: ${Object.keys(PLATFORMS).join(", ")}`
-    );
-    process.exit(1);
-  }
-
+function installedBinary(pkg) {
   try {
-    const pkgPath = require.resolve(`${pkg}/package.json`);
-    const binDir = path.dirname(pkgPath);
-    const binName = process.platform === "win32" ? "mentedb-mcp.exe" : "mentedb-mcp";
-    const binPath = path.join(binDir, "bin", binName);
-
+    const binPath = path.join(path.dirname(require.resolve(`${pkg}/package.json`)), "bin", binName);
     if (fs.existsSync(binPath)) {
       return binPath;
     }
   } catch (_e) {
     // Package not installed
   }
-
-  console.error(
-    `Could not find the mentedb-mcp binary for ${platformKey}.\n` +
-    `Try reinstalling: npm install -g mentedb-mcp`
-  );
-  process.exit(1);
+  return null;
 }
 
-const binPath = getBinaryPath();
-
-try {
-  execFileSync(binPath, process.argv.slice(2), {
-    stdio: "inherit",
-    env: process.env,
-  });
-} catch (e) {
-  if (e.status !== undefined) {
-    process.exit(e.status);
+// npm skips an optional dependency it cannot resolve without failing the
+// install, so `npx mentedb-mcp@latest` run in the minutes after a release (with
+// registry metadata for the platform package still cached from before it) can
+// cache an install with no binary. Instead of failing every run until that
+// cache expires, fetch the exact platform package from the registry, verify it
+// against the registry's integrity hash, and keep it under ~/.mentedb/bin.
+async function fetchBinary(pkg, version) {
+  const short = pkg.split("/")[1];
+  const root = path.join(os.homedir(), ".mentedb", "bin", `${short}-${version}`);
+  const binPath = path.join(root, "package", "bin", binName);
+  if (fs.existsSync(binPath)) {
+    return binPath;
   }
-  throw e;
+  const meta = await fetch(`https://registry.npmjs.org/${pkg.replace("/", "%2f")}/${version}`);
+  if (!meta.ok) {
+    throw new Error(`registry lookup for ${pkg}@${version} failed: HTTP ${meta.status}`);
+  }
+  const { dist } = await meta.json();
+  const res = await fetch(dist.tarball);
+  if (!res.ok) {
+    throw new Error(`download of ${pkg}@${version} failed: HTTP ${res.status}`);
+  }
+  const tgz = Buffer.from(await res.arrayBuffer());
+  const [algo, expected] = dist.integrity.split("-");
+  const actual = crypto.createHash(algo).update(tgz).digest("base64");
+  if (actual !== expected) {
+    throw new Error(`integrity check failed for ${pkg}@${version}`);
+  }
+  // Unpack into a private directory, then move it into place, so concurrent
+  // hook runs never see a half extracted binary.
+  fs.mkdirSync(path.dirname(root), { recursive: true });
+  const tmp = fs.mkdtempSync(`${root}.tmp-`);
+  try {
+    const file = path.join(tmp, "pkg.tgz");
+    fs.writeFileSync(file, tgz);
+    execFileSync("tar", ["-xzf", file, "-C", tmp]);
+    fs.chmodSync(path.join(tmp, "package", "bin", binName), 0o755);
+    fs.rmSync(file);
+    try {
+      fs.renameSync(tmp, root);
+    } catch (e) {
+      // Another run finished first; its copy is identical.
+      if (!fs.existsSync(binPath)) {
+        throw e;
+      }
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  return binPath;
 }
+
+async function getBinaryPath() {
+  const pkg = PLATFORMS[platformKey];
+  if (!pkg) {
+    console.error(
+      `Unsupported platform: ${platformKey}\n` +
+      `Supported: ${Object.keys(PLATFORMS).join(", ")}`
+    );
+    process.exit(1);
+  }
+  const installed = installedBinary(pkg);
+  if (installed) {
+    return installed;
+  }
+  const version = require("../package.json").optionalDependencies[pkg];
+  try {
+    return await fetchBinary(pkg, version);
+  } catch (e) {
+    console.error(
+      `Could not find the mentedb-mcp binary for ${platformKey} (${e.message}).\n` +
+      `Try reinstalling: npm install -g mentedb-mcp`
+    );
+    process.exit(1);
+  }
+}
+
+getBinaryPath().then((binPath) => {
+  try {
+    execFileSync(binPath, process.argv.slice(2), {
+      stdio: "inherit",
+      env: process.env,
+    });
+  } catch (e) {
+    if (e.status !== undefined) {
+      process.exit(e.status);
+    }
+    throw e;
+  }
+});

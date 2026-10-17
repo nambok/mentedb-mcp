@@ -8,16 +8,31 @@
     "url": "https://github.com/nambok/mentedb-mcp"
   },
   "homepage": "https://mentedb.com",
-  "keywords": ["mcp", "ai", "memory", "database", "agents", "claude", "copilot", "cursor"],
+  "keywords": [
+    "mcp",
+    "ai",
+    "memory",
+    "database",
+    "agents",
+    "claude",
+    "copilot",
+    "cursor"
+  ],
   "bin": {
     "mentedb-mcp": "bin/mentedb-mcp"
   },
-  "files": ["bin", "README.md"],
+  "files": [
+    "bin",
+    "README.md"
+  ],
   "optionalDependencies": {
     "@mentedb/mcp-darwin-arm64": "0.4.3",
     "@mentedb/mcp-darwin-x64": "0.4.3",
     "@mentedb/mcp-linux-arm64": "0.4.3",
     "@mentedb/mcp-linux-x64": "0.4.3",
     "@mentedb/mcp-win32-x64": "0.4.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

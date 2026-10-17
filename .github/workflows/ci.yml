@@ -10,6 +10,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  launcher:
+    name: Launcher self heal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      # Runs the npm launcher with its platform package missing against the
+      # latest published release: it must fetch, verify and run the binary.
+      - run: scripts/test-launcher.sh
+
   check:
     name: Check
     runs-on: ubuntu-latest

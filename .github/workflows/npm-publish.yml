@@ -194,6 +194,8 @@ jobs:
     needs: publish-npm
     runs-on: ${{ matrix.os }}
     strategy:
+      # Report every OS; one failure must not hide the others.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
@@ -207,16 +209,29 @@ jobs:
       - name: Clean install runs the binary
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          for i in $(seq 1 30); do
-            [ "$(npm view "mentedb-mcp@$version" version --prefer-online 2>/dev/null)" = "$version" ] && break
-            sleep 10
+          # Registry edges lag a fresh publish by minutes, so a just published
+          # version can be missing on one request and present on the next.
+          # Retry from an empty cache; only a failure that persists is real.
+          for i in $(seq 1 10); do
+            export npm_config_cache="$RUNNER_TEMP/npm-cache-$i"
+            npx -y --prefer-online "mentedb-mcp@$version" --help | grep -q "MCP server for MenteDB" && exit 0
+            echo "attempt $i failed, retrying in 30s"
+            sleep 30
           done
-          npx -y --prefer-online "mentedb-mcp@$version" --help | grep -q "MCP server for MenteDB"
+          echo "mentedb-mcp@$version did not install and run after 10 attempts"
+          exit 1
       - name: Install without the platform package still runs
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          dir=$(mktemp -d)
-          cd "$dir"
-          npm init -y >/dev/null
-          npm install --omit=optional "mentedb-mcp@$version" >/dev/null
-          HOME="$dir/home" USERPROFILE="$dir/home" npx mentedb-mcp --help | grep -q "MCP server for MenteDB"
+          for i in $(seq 1 10); do
+            dir=$(mktemp -d)
+            if (cd "$dir" && npm init -y >/dev/null \
+                && npm_config_cache="$dir/cache" npm install --omit=optional "mentedb-mcp@$version" >/dev/null \
+                && HOME="$dir/home" USERPROFILE="$dir/home" npx mentedb-mcp --help | grep -q "MCP server for MenteDB"); then
+              exit 0
+            fi
+            echo "attempt $i failed, retrying in 30s"
+            sleep 30
+          done
+          echo "install without the platform package failed after 10 attempts"
+          exit 1

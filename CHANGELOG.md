@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.41](https://github.com/nambok/mentedb-mcp/compare/v0.5.40...v0.5.41) - 2026-10-17
+
+### Other
+
+- flush queued notes as store_memories batches instead of one call each ([#221](https://github.com/nambok/mentedb-mcp/pull/221))
+- publish to npm with trusted publishing and fail on real publish errors ([#219](https://github.com/nambok/mentedb-mcp/pull/219))
+
 ## [0.5.40](https://github.com/nambok/mentedb-mcp/compare/v0.5.39...v0.5.40) - 2026-10-08
 
 ### Fixed

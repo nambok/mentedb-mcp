@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.42](https://github.com/nambok/mentedb-mcp/compare/v0.5.41...v0.5.42) - 2026-10-17
+
+### Fixed
+
+- launcher fetches a missing platform binary, and CI verifies installs after every release ([#222](https://github.com/nambok/mentedb-mcp/pull/222))
+
 ## [0.5.41](https://github.com/nambok/mentedb-mcp/compare/v0.5.40...v0.5.41) - 2026-10-17
 
 ### Other

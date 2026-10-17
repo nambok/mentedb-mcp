@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.43](https://github.com/nambok/mentedb-mcp/compare/v0.5.42...v0.5.43) - 2026-10-17
+
+### Fixed
+
+- launcher unpacks the platform binary in process so it works on Windows ([#226](https://github.com/nambok/mentedb-mcp/pull/226))
+
+### Other
+
+- retry post publish install checks through registry lag and report every OS ([#224](https://github.com/nambok/mentedb-mcp/pull/224))
+
 ## [0.5.42](https://github.com/nambok/mentedb-mcp/compare/v0.5.41...v0.5.42) - 2026-10-17
 
 ### Fixed

@@ -266,6 +266,43 @@ impl Backend {
         }
     }
 
+    /// Store several action notes in one request. Cloud sends them as a single
+    /// `store_memories` batch: one round trip, one write and one disk sync on
+    /// the server instead of one of each per note, which is what lets a queued
+    /// backlog drain in a few requests.
+    pub async fn store_notes(&self, notes: &[(String, Option<String>)]) -> anyhow::Result<()> {
+        match self {
+            Backend::Cloud(client) => {
+                let memories: Vec<serde_json::Value> = notes
+                    .iter()
+                    .map(|(content, project)| {
+                        let mut tags = vec!["action".to_string()];
+                        if let Some(p) = project {
+                            tags.push(format!("scope:project:{p}"));
+                        }
+                        json!({
+                            "content": content,
+                            "memory_type": "episodic",
+                            "tags": tags,
+                        })
+                    })
+                    .collect();
+                client
+                    .call_tool("store_memories", json!({ "memories": memories }))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                Ok(())
+            }
+            #[cfg(feature = "local")]
+            Backend::Local(_) => {
+                for (content, project) in notes {
+                    self.store_note(content, project.clone()).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Flush in-memory engine state to disk before context loss. No-op for
     /// cloud, where every write is already persisted server-side.
     pub async fn flush(&self) -> anyhow::Result<()> {

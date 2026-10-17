@@ -728,3 +728,111 @@ fn user_prompt_fails_open_fast_when_cloud_hangs() {
     );
     drop(hold);
 }
+
+/// A fake cloud that answers every tool call with success and records, per
+/// request, the tool name and how many memories it carried.
+fn fake_cloud() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
+    use std::io::{BufRead, BufReader, Read};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                let lower = line.to_ascii_lowercase();
+                if let Some(v) = lower.strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0u8; len];
+            let _ = reader.read_exact(&mut body);
+            let req: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let name = req["name"].as_str().unwrap_or("").to_string();
+            let n = req["arguments"]["memories"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(1);
+            log.lock().unwrap().push((name, n));
+            let resp = r#"{"content":[{"type":"text","text":"{}"}],"is_error":false}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp.len(),
+                resp
+            );
+        }
+    });
+    (port, seen)
+}
+
+/// A queued backlog of action notes drains in a few batch calls, not one
+/// round trip (and one server side embed, write and disk sync) per note.
+#[test]
+fn queued_notes_flush_as_batches() {
+    let _guard = serial();
+    let (port, seen) = fake_cloud();
+    let home = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    let backlog: String = (0..120)
+        .map(|i| {
+            serde_json::json!({ "kind": "note", "content": format!("edited file {i}"), "project": "p" })
+                .to_string()
+                + "\n"
+        })
+        .collect();
+    std::fs::write(data_dir.path().join("spool.jsonl"), backlog).unwrap();
+
+    let payload = serde_json::json!({
+        "session_id": "batch-test",
+        "tool_name": "Edit",
+        "tool_input": { "file_path": "src/lib.rs" },
+        "cwd": "/tmp/p",
+        "hook_event_name": "PostToolUse",
+    });
+    let mut child = Command::new(BIN)
+        .args([
+            "--data-dir",
+            data_dir.path().to_str().unwrap(),
+            "hook",
+            "post-tool-use",
+        ])
+        .env("HOME", home.path())
+        .env("MENTEDB_API_KEY", "test-key")
+        .env("MENTEDB_API_URL", format!("http://127.0.0.1:{port}"))
+        .env("MENTEDB_HOOK_NO_SELF_UPDATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to run hook");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+
+    let calls = seen.lock().unwrap().clone();
+    let batches: Vec<usize> = calls
+        .iter()
+        .filter(|(name, _)| name == "store_memories")
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(batches, vec![50, 50, 20], "calls: {calls:?}");
+    let left = std::fs::read_to_string(data_dir.path().join("spool.jsonl")).unwrap_or_default();
+    assert!(
+        left.trim().is_empty(),
+        "spool should be drained, left: {left}"
+    );
+}

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.45](https://github.com/nambok/mentedb-mcp/compare/v0.5.44...v0.5.45) - 2026-10-18
+
+### Fixed
+
+- shrink the spool batch after a timeout so a slow server never jams the queue ([#229](https://github.com/nambok/mentedb-mcp/pull/229))
+
 ## [0.5.44](https://github.com/nambok/mentedb-mcp/compare/v0.5.43...v0.5.44) - 2026-10-18
 
 ### Other

@@ -732,6 +732,14 @@ fn user_prompt_fails_open_fast_when_cloud_hangs() {
 /// A fake cloud that answers every tool call with success and records, per
 /// request, the tool name and how many memories it carried.
 fn fake_cloud() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
+    fake_cloud_with_delay(Duration::ZERO)
+}
+
+/// `fake_cloud` that takes `per_memory` to answer for each memory a call
+/// carries, like a server that embeds and checks every note.
+fn fake_cloud_with_delay(
+    per_memory: Duration,
+) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
     use std::io::{BufRead, BufReader, Read};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -763,6 +771,7 @@ fn fake_cloud() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>)
                 .map(|a| a.len())
                 .unwrap_or(1);
             log.lock().unwrap().push((name, n));
+            std::thread::sleep(per_memory * n as u32);
             let resp = r#"{"content":[{"type":"text","text":"{}"}],"is_error":false}"#;
             let _ = write!(
                 stream,
@@ -835,4 +844,97 @@ fn queued_notes_flush_as_batches() {
         left.trim().is_empty(),
         "spool should be drained, left: {left}"
     );
+}
+
+/// A server too slow to store a full batch within the hook's batch timeout
+/// must not jam the queue: the hook halves the batch after a timeout, grows it
+/// back after successes, and the backlog drains over a few hooks.
+#[test]
+fn a_slow_server_gets_smaller_batches_and_the_backlog_drains() {
+    let _guard = serial();
+    // 60ms per note: 50 notes take 3s, over the 2s batch timeout set below.
+    let (port, seen) = fake_cloud_with_delay(Duration::from_millis(60));
+    let home = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    let backlog: String = (0..120)
+        .map(|i| {
+            serde_json::json!({ "kind": "note", "content": format!("edited file {i}"), "project": "p" })
+                .to_string()
+                + "\n"
+        })
+        .collect();
+    std::fs::write(data_dir.path().join("spool.jsonl"), backlog).unwrap();
+    // A different file each run: the hook skips a note it just saw, and a
+    // skipped note does not flush the spool.
+    let payload = |run: usize| {
+        serde_json::json!({
+            "session_id": "slow-batch-test",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": format!("src/file{run}.rs") },
+            "cwd": "/tmp/p",
+            "hook_event_name": "PostToolUse",
+        })
+    };
+    let spool_left = || {
+        std::fs::read_to_string(data_dir.path().join("spool.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count()
+    };
+    let mut runs = 0;
+    while spool_left() > 0 && runs < 12 {
+        runs += 1;
+        let mut child = Command::new(BIN)
+            .args([
+                "--data-dir",
+                data_dir.path().to_str().unwrap(),
+                "hook",
+                "post-tool-use",
+            ])
+            .env("HOME", home.path())
+            .env("MENTEDB_API_KEY", "test-key")
+            .env("MENTEDB_API_URL", format!("http://127.0.0.1:{port}"))
+            .env("MENTEDB_HOOK_NO_SELF_UPDATE", "1")
+            .env("MENTEDB_HOOK_BATCH_TIMEOUT_MS", "2000")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to run hook");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(payload(runs).to_string().as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+    }
+    let batches: Vec<usize> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name == "store_memories")
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(
+        &batches[..2],
+        &[50, 25],
+        "halves after the first timeout: {batches:?}"
+    );
+    assert!(
+        batches.iter().all(|&n| n <= 50),
+        "never above the cap: {batches:?}"
+    );
+    assert_eq!(
+        spool_left(),
+        0,
+        "backlog drained within {runs} hooks: {batches:?}"
+    );
+    let learned: usize = std::fs::read_to_string(data_dir.path().join("spool_batch"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(learned < 50, "the smaller size is remembered: {learned}");
 }

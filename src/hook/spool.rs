@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 const SPOOL_FILE: &str = "spool.jsonl";
 const MAX_ENTRIES: usize = 1_000;
+/// Remembers how many notes the last flush could send in one call.
+const BATCH_FILE: &str = "spool_batch";
 
 pub fn spool_path(data_dir: &Path) -> PathBuf {
     data_dir.join(SPOOL_FILE)
@@ -45,6 +47,20 @@ pub fn take_all(data_dir: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Notes to send per call, as learned by earlier flushes. `default` until a
+/// flush has recorded one; never below 1 or above `max`.
+pub fn batch_size(data_dir: &Path, default: usize, max: usize) -> usize {
+    std::fs::read_to_string(data_dir.join(BATCH_FILE))
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+        .clamp(1, max.max(1))
+}
+
+pub fn set_batch_size(data_dir: &Path, size: usize) {
+    std::fs::write(data_dir.join(BATCH_FILE), size.max(1).to_string()).ok();
+}
+
 pub fn restore(data_dir: &Path, entries: &[serde_json::Value]) {
     for e in entries {
         push(data_dir, e);
@@ -78,6 +94,22 @@ mod tests {
         let entries = take_all(dir.path());
         restore(dir.path(), &entries);
         assert_eq!(depth(dir.path()), 1);
+    }
+
+    #[test]
+    fn batch_size_is_remembered_and_clamped() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            batch_size(dir.path(), 50, 50),
+            50,
+            "default before any flush"
+        );
+        set_batch_size(dir.path(), 12);
+        assert_eq!(batch_size(dir.path(), 50, 50), 12);
+        set_batch_size(dir.path(), 0);
+        assert_eq!(batch_size(dir.path(), 50, 50), 1, "never below one");
+        set_batch_size(dir.path(), 500);
+        assert_eq!(batch_size(dir.path(), 50, 50), 50, "never above the cap");
     }
 
     #[test]

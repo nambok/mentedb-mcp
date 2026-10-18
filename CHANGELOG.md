@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.44](https://github.com/nambok/mentedb-mcp/compare/v0.5.43...v0.5.44) - 2026-10-18
+
+### Other
+
+- correct README claims against the code (hooks, tools, env vars, embeddings) ([#227](https://github.com/nambok/mentedb-mcp/pull/227))
+
 ## [0.5.43](https://github.com/nambok/mentedb-mcp/compare/v0.5.42...v0.5.43) - 2026-10-17
 
 ### Fixed

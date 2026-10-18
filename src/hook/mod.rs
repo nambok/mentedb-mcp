@@ -671,7 +671,12 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
     if entries.is_empty() {
         return;
     }
-    let failed = flush_entries(entries, backend).await;
+    let batch = spool::batch_size(data_dir, NOTE_BATCH, NOTE_BATCH);
+    let (failed, next_batch) = flush_entries(entries, backend, batch).await;
+    if next_batch != batch {
+        tracing::info!(from = batch, to = next_batch, "spool batch size adjusted");
+        spool::set_batch_size(data_dir, next_batch);
+    }
     if failed.is_empty() {
         tracing::info!("offline spool fully flushed");
     } else {
@@ -685,21 +690,46 @@ async fn flush_spool(data_dir: &Path, backend: &Backend) {
 const MAX_FLUSH_CALLS: usize = 10;
 /// Wall clock budget per flush; no new call starts after it.
 const FLUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
-/// Consecutive notes sent together in one `store_memories` batch.
+/// Most consecutive notes sent together in one `store_memories` batch.
 const NOTE_BATCH: usize = 50;
 /// A batch does one write on the server however many notes it carries, but
-/// embeds each one, so it gets more time than a single store.
-const NOTE_BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+/// embeds and checks each one, so it gets more time than a single store.
+/// MENTEDB_HOOK_BATCH_TIMEOUT_MS overrides it.
+const NOTE_BATCH_TIMEOUT_MS: u64 = 8_000;
+
+fn note_batch_timeout() -> std::time::Duration {
+    let ms = std::env::var("MENTEDB_HOOK_BATCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .unwrap_or(NOTE_BATCH_TIMEOUT_MS);
+    std::time::Duration::from_millis(ms)
+}
+
+/// Batch size after a batch that did not finish in time: half, at least one.
+/// A server slower than the timeout for a full batch would otherwise get the
+/// same oversized batch on every hook and the backlog would never drain.
+fn shrink_batch(size: usize) -> usize {
+    (size / 2).max(1)
+}
+
+/// Batch size after a batch that went through: grow by a quarter, at most
+/// `NOTE_BATCH`, so it settles just under what the server handles in time.
+fn grow_batch(size: usize) -> usize {
+    (size + (size / 4).max(1)).min(NOTE_BATCH)
+}
 const SINGLE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Send spooled entries in order and return the ones not delivered (the
-/// first failure and everything after it). Runs of consecutive notes go up
-/// as one batch, which is what drains a backlog of hundreds in a few calls
-/// instead of one round trip, embed and disk sync per note.
+/// first failure and everything after it) with the batch size to use next
+/// time. Runs of consecutive notes go up as one batch of up to `batch`,
+/// which is what drains a backlog of hundreds in a few calls instead of one
+/// round trip, embed and disk sync per note.
 async fn flush_entries(
     entries: Vec<serde_json::Value>,
     backend: &Backend,
-) -> Vec<serde_json::Value> {
+    mut batch_size: usize,
+) -> (Vec<serde_json::Value>, usize) {
     let start = std::time::Instant::now();
     let mut calls = 0usize;
     let mut rest = std::collections::VecDeque::from(entries);
@@ -712,7 +742,7 @@ async fn flush_entries(
         if kind == "note" {
             // Gather this note and the notes right after it.
             let mut batch = vec![e];
-            while batch.len() < NOTE_BATCH
+            while batch.len() < batch_size
                 && rest
                     .front()
                     .and_then(|n| n.get("kind"))
@@ -739,12 +769,21 @@ async fn flush_entries(
                 continue; // malformed, drop
             }
             calls += 1;
-            let ok = tokio::time::timeout(NOTE_BATCH_TIMEOUT, backend.store_notes(&notes))
-                .await
-                .is_ok_and(|r| r.is_ok());
-            if !ok {
-                batch.extend(rest);
-                return batch;
+            let sent =
+                tokio::time::timeout(note_batch_timeout(), backend.store_notes(&notes)).await;
+            match sent {
+                Ok(Ok(_)) => batch_size = grow_batch(batch_size),
+                // Too slow for this size: retry smaller next time. The server
+                // may still finish storing it; a resent note is caught by its
+                // duplicate check.
+                Err(_) => {
+                    batch.extend(rest);
+                    return (batch, shrink_batch(batch_size));
+                }
+                Ok(Err(_)) => {
+                    batch.extend(rest);
+                    return (batch, batch_size);
+                }
             }
             continue;
         }
@@ -803,7 +842,7 @@ async fn flush_entries(
             break;
         }
     }
-    rest.into_iter().collect()
+    (rest.into_iter().collect(), batch_size)
 }
 
 /// Bash command prefixes that only read state and are not worth remembering.
@@ -1244,6 +1283,15 @@ mod tests {
         let text = format_context(&ctx).unwrap();
         assert!(text.contains("[semantic] User prefers Rust"));
         assert!(text.contains("WARNING (past failure): deploy without tests broke prod"));
+    }
+
+    #[test]
+    fn batch_size_halves_on_timeout_and_grows_back_slowly() {
+        assert_eq!(shrink_batch(50), 25);
+        assert_eq!(shrink_batch(1), 1, "never below one");
+        assert_eq!(grow_batch(25), 31);
+        assert_eq!(grow_batch(1), 2);
+        assert_eq!(grow_batch(48), NOTE_BATCH, "never above the cap");
     }
 
     #[test]

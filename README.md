@@ -42,9 +42,9 @@ This writes six hooks into `~/.claude/settings.json` (and every other Claude Cod
 |------|-------------|
 | `UserPromptSubmit` | Recalls context for your prompt and injects it before the model responds |
 | `PostToolUse` | Captures significant actions (file edits, non-trivial commands) as they happen, so a long agentic session never loses work if it is interrupted |
-| `PreToolUse` | Surfaces your action rules (memories tagged `trigger:git-commit`, `trigger:pr-create`) right before the matching command runs, so commit style and PR format preferences apply at the exact moment they matter |
+| `PreToolUse` | Before each shell command, sends the command text to MenteDB and injects the stored rules that bear on it, matched by meaning rather than a fixed list of actions, so commit style and PR format preferences apply at the moment they matter. It never approves or blocks a command, gives up after 1.5 seconds, and prints nothing on failure |
 | `Stop` | Stores the completed turn (your prompt plus the assistant's answer) through the full cognitive pipeline |
-| `PreCompact` | Flushes memory to disk before Claude Code compacts a long session, so nothing captured so far is lost |
+| `PreCompact` | Makes everything captured so far durable before Claude Code compacts a long session |
 | `SessionStart` | Injects your user profile and always-scoped memories at session start, resume, and right after context compaction |
 
 Why hooks beat MCP for memory:
@@ -52,7 +52,7 @@ Why hooks beat MCP for memory:
 - Zero token overhead: no tool schemas enter the model context (MCP tool definitions cost thousands of tokens per session)
 - Deterministic: memory runs on every turn; the model never forgets to call it
 - Post-compaction recovery: the SessionStart hook re-injects standing context after Claude Code compacts, which MCP tools cannot do
-- Hooks never block: any failure is logged to `~/.mentedb/` and the turn proceeds normally
+- Hooks never fail the turn: any error is logged to `~/.mentedb/` and the turn proceeds normally. Recall in `UserPromptSubmit` gives up after 8 seconds (override with `MENTEDB_HOOK_RECALL_BUDGET_MS`)
 
 The hook backend follows your login state: cloud when authenticated (each hook is a single HTTP call), otherwise a local daemon that owns the embedded database and starts automatically on first use (`mentedb-mcp daemon`). The daemon keeps the embedding model loaded and flushes to disk after every stored turn.
 
@@ -103,7 +103,10 @@ The `update` command shows you the exact instructions that will be written and a
 | `update <client>` | Update agent instructions (preserves customizations) |
 | `login` | Authenticate with MenteDB Cloud via browser |
 | `logout` | Remove cloud credentials |
-| `status` | Check cloud connection and token validity |
+| `status` | Print a health summary from local state: auth, daemon, cloud reachability, retry spool, last sync (exits 1 when unhealthy) |
+| `doctor` | Diagnose the full memory pipeline (credentials, hooks, capture, spool) |
+| `accounts` | Manage named accounts: `add`, `list`, `use`, `remove` |
+| `sync` | Push memories from the local database up to MenteDB Cloud |
 | `hook <event>` | Process a lifecycle hook: user-prompt, stop, session-start, post-tool-use, pre-tool-use, pre-compact |
 | `daemon` | Run the local hook daemon (started automatically by hooks when needed) |
 
@@ -184,15 +187,17 @@ The `alwaysAllow` list lets memory tools run without approval prompts.
 
 ## Tools
 
-By default, the server exposes 4 essential tools:
+By default the server exposes only the essential tools: 5 in cloud mode (after login), 4 in local mode, where `store_memories` is not available.
 
 | Tool | Description |
 |------|-------------|
 | `process_turn` | **Call every turn.** Stores conversation, retrieves context, detects contradictions, generates pain warnings. Triggers automatic enrichment when LLM is configured. Accepts `project_context` and `agent_id` for scoping. |
 | `store_memory` | Store an important fact with type, tags, and optional scope. |
-| `store_memories` | Store several memories in one batch transaction (one lock and flush, near duplicate rejection). Accepts optional `agent_id` for scoped ownership. |
+| `store_memories` | Cloud mode only. Store several memories in one batch transaction (one lock and flush, near duplicate rejection). Accepts optional `agent_id` for scoped ownership. |
 | `search_memories` | Semantic search by query, or get full content by memory UUID. Accepts `limit` (default 10, max 50) and `memory_type` filter. |
 | `forget_memory` | Delete a memory by ID. Accepts optional `reason` for audit logging. |
+
+The hosted endpoint `https://api.mentedb.com/mcp` (used by the Claude plugin and custom connectors) exposes a larger set: the five above plus `list_memories`, `get_recent_activity`, `get_session_context`, `get_injection_context`, `get_action_rules`, `ingest_agent_file`, `get_ingest_status`, `record_injection_outcome`, and `store_memory_multimodal`.
 
 ### Multi agent isolation
 
@@ -215,7 +220,7 @@ Hitting a monthly limit never breaks recall: reads keep working, new turns are s
 
 ### Automatic Enrichment
 
-When an LLM provider is configured, `process_turn` automatically triggers a background enrichment pipeline that enhances your memory graph over time:
+In local mode, when an LLM provider is configured, `process_turn` automatically triggers a background enrichment pipeline that enhances your memory graph over time:
 
 | Phase | What it does |
 |-------|-------------|
@@ -226,18 +231,22 @@ When an LLM provider is configured, `process_turn` automatically triggers a back
 
 Enrichment is **fully automatic** — no additional tools or configuration needed beyond setting an LLM provider. Results feed directly into future `process_turn` context retrieval, improving recall quality over time.
 
-Configure an LLM provider via environment variables:
+Configure an LLM provider via environment variables (the provider defaults to `mock`, which disables enrichment, so it must be set explicitly):
 
 ```bash
-# OpenAI (recommended)
-export MENTEDB_OPENAI_API_KEY=sk-...
+# OpenAI
+export MENTEDB_LLM_PROVIDER=openai
+export MENTEDB_LLM_API_KEY=sk-...   # falls back to OPENAI_API_KEY
 
 # Or Anthropic
-export MENTEDB_ANTHROPIC_API_KEY=sk-ant-...
+export MENTEDB_LLM_PROVIDER=anthropic
+export MENTEDB_LLM_API_KEY=sk-ant-...
 
 # Or Ollama (local, no key needed)
 export MENTEDB_LLM_PROVIDER=ollama
 ```
+
+In cloud mode enrichment runs server side and needs no configuration.
 
 Without an LLM provider, the MCP server works perfectly — enrichment simply doesn't run.
 
@@ -287,7 +296,7 @@ mentedb-mcp [OPTIONS]
 Options:
   --local                     Force local mode (embedded database; safe for concurrent processes via file locking)
   --data-dir <PATH>           Data directory path [default: ~/.mentedb]
-  --embedding-dim <DIM>       Embedding vector dimension [default: 128]
+  --embedding-dim <DIM>       Dimension of the hash fallback used only if the local embedding model fails to load [default: 128]
   --llm-provider <PROVIDER>   LLM provider for local extraction: openai, anthropic, ollama, mock [default: mock]
   --llm-api-key <KEY>         API key for the LLM provider (overrides env var)
   --llm-model <MODEL>         Model name override for the LLM provider
@@ -299,21 +308,21 @@ Options:
 
 | Variable | Description |
 |----------|-------------|
+| `MENTEDB_API_KEY` | `mdb_` API key; when set it takes precedence over the logged in account |
 | `MENTEDB_API_URL` | Override cloud API URL (default: https://api.mentedb.com) |
 | `MENTEDB_CLOUD_URL` | Override cloud dashboard URL (for login flow) |
 | `MENTEDB_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `ollama`, `mock` |
-| `MENTEDB_LLM_API_KEY` | API key for LLM extraction |
+| `MENTEDB_LLM_API_KEY` | API key for LLM extraction (falls back to `OPENAI_API_KEY`) |
 | `MENTEDB_LLM_MODEL` | Model name override |
-| `MENTEDB_OPENAI_API_KEY` | OpenAI API key (sets provider to `openai` automatically) |
-| `MENTEDB_ANTHROPIC_API_KEY` | Anthropic API key (sets provider to `anthropic` automatically) |
+| `MENTEDB_HOOK_RECALL_BUDGET_MS` | Time limit for recall in the `UserPromptSubmit` hook (default 8000) |
 
 The server writes logs to both stderr and a rolling file at `~/.mentedb/mentedb-mcp.log`.
 
 ## Architecture
 
-**Cloud mode (after login):** The server runs as a lightweight HTTP proxy on stdio transport. Memory operations are forwarded to MenteDB Cloud, which runs the MenteDB engine on ECS Fargate with per-user data directories on EFS, embeddings via AWS Bedrock Titan, and server-side LLM extraction. No local state is kept.
+**Cloud mode (after login):** The server runs as a lightweight HTTP proxy on stdio transport. Memory operations are forwarded to MenteDB Cloud, which runs the MenteDB engine on ECS Fargate with per-user data directories on encrypted EFS, embeddings via Cohere embed-english-v3 (1024 dimensions) on AWS Bedrock, and server-side LLM extraction. No memories are stored locally; only credentials, logs, and the hooks' retry spool live under `~/.mentedb/`.
 
-**Local mode (`--local`):** The server uses the full MenteDB engine with an embedded fjall database, local Candle embeddings (all-MiniLM-L6-v2), and optional LLM extraction. This mode supports all 32 tools including knowledge graph, consolidation, and cognitive systems.
+**Local mode (`--local`):** The server uses the full MenteDB engine with its embedded storage engine, local Candle embeddings (all-MiniLM-L6-v2, 384 dimensions), and optional LLM extraction. This mode supports all 32 tools including knowledge graph, consolidation, and cognitive systems.
 
 ## Issues
 

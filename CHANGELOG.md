@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.49](https://github.com/nambok/mentedb-mcp/compare/v0.5.48...v0.5.49) - 2026-10-23
+
+### Other
+
+- *(npm)* skip versions already on the registry and wait longer for platform packages ([#249](https://github.com/nambok/mentedb-mcp/pull/249))
+
 ## [0.5.48](https://github.com/nambok/mentedb-mcp/compare/v0.5.47...v0.5.48) - 2026-10-23
 
 ### Fixed

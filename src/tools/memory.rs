@@ -78,7 +78,7 @@ impl MenteDbServer {
         match db.store(node) {
             Ok(()) => {
                 tracing::info!(id = %id, memory_type = %req.memory_type, "memory stored");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({ "id": id.to_string(), "status": "stored" }).to_string(),
                 )]))
             }
@@ -105,7 +105,7 @@ impl MenteDbServer {
         match find_memory_by_id(db, id) {
             Ok(Some(sm)) => {
                 tracing::info!(id = %id, "memory recalled");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     memory_node_to_json(&sm.memory).to_string(),
                 )]))
             }
@@ -131,7 +131,7 @@ impl MenteDbServer {
         if let Ok(uuid) = Uuid::parse_str(req.query.trim()) {
             let db = &*self.db;
             if let Ok(Some(mem)) = find_memory_by_id(db, uuid) {
-                return Ok(CallToolResult::success(vec![Content::text(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "id": uuid.to_string(),
                         "content": mem.memory.content,
@@ -208,7 +208,7 @@ impl MenteDbServer {
                     sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
                 });
                 items.truncate(k);
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({ "results": items, "count": items.len() }).to_string(),
                 )]))
             }
@@ -235,7 +235,7 @@ impl MenteDbServer {
         match find_memory_by_id(db, id) {
             Ok(Some(sm)) => {
                 tracing::info!(id = %id, "memory retrieved");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     memory_node_to_json(&sm.memory).to_string(),
                 )]))
             }
@@ -270,7 +270,7 @@ impl MenteDbServer {
         match db.forget(MemoryId(id)) {
             Ok(()) => {
                 tracing::info!(id = %id, "memory forgotten");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({ "status": "forgotten", "id": id.to_string() }).to_string(),
                 )]))
             }
@@ -318,7 +318,7 @@ impl MenteDbServer {
             errors = errors,
             "forget_all complete"
         );
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "reset_complete",
                 "total_found": total,

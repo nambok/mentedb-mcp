@@ -18,7 +18,7 @@ impl MenteDbServer {
             .map_err(|e| McpError::internal_error(format!("Consolidation failed: {e}"), None))?;
 
         if candidates.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
                 json!({ "status": "no_clusters", "clusters": [], "consolidated": [] }).to_string(),
             )]));
         }
@@ -46,7 +46,7 @@ impl MenteDbServer {
             "memory consolidation complete"
         );
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "complete",
                 "clusters_found": candidates.len(),
@@ -67,7 +67,7 @@ impl MenteDbServer {
 
         tracing::info!(updated, "decay applied globally");
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "complete",
                 "memories_updated": updated,
@@ -106,7 +106,7 @@ impl MenteDbServer {
                     "memory compressed"
                 );
 
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "id": id.to_string(),
                         "original_length": original_length,
@@ -166,7 +166,7 @@ impl MenteDbServer {
             "archival evaluation complete"
         );
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "complete",
                 "total_evaluated": decisions.len(),
@@ -241,7 +241,7 @@ impl MenteDbServer {
 
                 tracing::info!(id = %id, facts_count = facts.len(), edges_created, "facts extracted and linked");
 
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "id": id.to_string(),
                         "facts_count": facts.len(),
@@ -307,7 +307,7 @@ impl MenteDbServer {
             "GDPR forget executed"
         );
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "complete",
                 "subject": agent_id.to_string(),

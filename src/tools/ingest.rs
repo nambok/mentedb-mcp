@@ -121,7 +121,7 @@ impl MenteDbServer {
             "stored_ids": stored_ids,
         });
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             response.to_string(),
         )]))
     }

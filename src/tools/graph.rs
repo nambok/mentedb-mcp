@@ -40,7 +40,7 @@ impl MenteDbServer {
         match db.relate(edge) {
             Ok(()) => {
                 tracing::info!(from = %from_id, to = %to_id, edge_type = %req.edge_type, "memories related");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "status": "related",
                         "from": from_id.to_string(),
@@ -135,7 +135,7 @@ impl MenteDbServer {
         }
 
         tracing::info!(id = %id, depth = depth, related_count = related.len(), "get_related completed");
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "id": id.to_string(), "related": related, "count": related.len() }).to_string(),
         )]))
     }
@@ -172,7 +172,7 @@ impl MenteDbServer {
             Some(path) => {
                 let path_strs: Vec<String> = path.iter().map(|id| id.to_string()).collect();
                 tracing::info!(from = %from_id, to = %to_id, hops = path.len() - 1, "path found");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "from": from_id.to_string(),
                         "to": to_id.to_string(),
@@ -184,7 +184,7 @@ impl MenteDbServer {
             }
             None => {
                 tracing::info!(from = %from_id, to = %to_id, "no path found");
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     json!({
                         "from": from_id.to_string(),
                         "to": to_id.to_string(),
@@ -240,7 +240,7 @@ impl MenteDbServer {
             edges = edges.len(),
             "subgraph extracted"
         );
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "center": center_id.to_string(),
                 "radius": radius,
@@ -277,7 +277,7 @@ impl MenteDbServer {
         let ids: Vec<String> = contradictions.iter().map(|c| c.to_string()).collect();
 
         tracing::info!(id = %id, contradictions = contradictions.len(), "contradictions found");
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "id": id.to_string(),
                 "contradictions": ids,
@@ -338,7 +338,7 @@ impl MenteDbServer {
             affected = affected.len(),
             "belief propagation completed"
         );
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "id": id.to_string(),
                 "new_confidence": req.new_confidence,

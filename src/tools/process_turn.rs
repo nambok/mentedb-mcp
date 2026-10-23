@@ -164,6 +164,6 @@ impl MenteDbServer {
         );
 
         let response = Self::assemble_response(&result);
-        Ok(CallToolResult::success(vec![Content::text(response)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
     }
 }

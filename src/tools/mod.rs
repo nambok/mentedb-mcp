@@ -293,7 +293,9 @@ pub(crate) fn parse_uuid(s: &str) -> Result<Uuid, String> {
 }
 
 pub(crate) fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![Content::text(msg.to_string())]))
+    Ok(CallToolResult::error(vec![ContentBlock::text(
+        msg.to_string(),
+    )]))
 }
 
 /// Translate a low level extraction error into a clear, actionable message

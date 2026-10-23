@@ -134,7 +134,7 @@ impl CloudMenteDbServer {
                 if resp.is_error {
                     error_result(&text)
                 } else {
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
+                    Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
                 }
             }
             Err(e) => error_result(&e),
@@ -143,7 +143,9 @@ impl CloudMenteDbServer {
 }
 
 fn error_result(msg: &str) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![Content::text(msg.to_string())]))
+    Ok(CallToolResult::error(vec![ContentBlock::text(
+        msg.to_string(),
+    )]))
 }
 
 #[rmcp::tool_router]
@@ -220,8 +222,8 @@ impl CloudMenteDbServer {
 }
 
 impl ServerHandler for CloudMenteDbServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> InitializeResult {
+        InitializeResult::new(
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_server_info(Implementation::new(
@@ -250,18 +252,14 @@ impl ServerHandler for CloudMenteDbServer {
         _request: Option<PaginatedRequestParams>,
         _cx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult {
-            meta: None,
-            tools: self.tool_router.list_all(),
-            next_cursor: None,
-        })
+        Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         cx: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let context = ToolCallContext::new(self, request, cx);
         self.tool_router.call(context).await
     }

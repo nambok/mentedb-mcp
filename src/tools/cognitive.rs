@@ -33,7 +33,7 @@ impl MenteDbServer {
         self.db.record_pain(signal);
         tracing::info!(signal_id = %signal_id, memory_id = %memory_id, "pain signal recorded");
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "recorded",
                 "signal_id": signal_id.to_string(),
@@ -72,7 +72,7 @@ impl MenteDbServer {
             turn_id = turn_id,
             "phantom detection complete"
         );
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "phantoms": items, "count": items.len() }).to_string(),
         )]))
     }
@@ -90,7 +90,7 @@ impl MenteDbServer {
         self.db.resolve_phantom(MemoryId::from(phantom_id));
         tracing::info!(phantom_id = %phantom_id, "phantom resolved");
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "status": "resolved", "phantom_id": phantom_id.to_string() }).to_string(),
         )]))
     }
@@ -131,7 +131,7 @@ impl MenteDbServer {
             "trajectory turn recorded"
         );
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "recorded",
                 "turn_id": req.turn_id,
@@ -148,7 +148,7 @@ impl MenteDbServer {
         let predictions = self.db.predict_next_topics();
         tracing::info!(count = predictions.len(), "topic predictions generated");
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "predictions": predictions, "count": predictions.len() }).to_string(),
         )]))
     }
@@ -192,7 +192,7 @@ impl MenteDbServer {
             .collect();
 
         tracing::info!(pairs = items.len(), "interference detection complete");
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "interference_pairs": items, "count": items.len() }).to_string(),
         )]))
     }
@@ -206,7 +206,7 @@ impl MenteDbServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(name = %req.name, entity_type = %req.entity_type, "registering entity");
         self.db.register_entity(&req.name);
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({
                 "status": "registered",
                 "name": req.name,
@@ -265,7 +265,7 @@ impl MenteDbServer {
             },
         });
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             result.to_string(),
         )]))
     }

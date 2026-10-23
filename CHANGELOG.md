@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.48](https://github.com/nambok/mentedb-mcp/compare/v0.5.47...v0.5.48) - 2026-10-23
+
+### Fixed
+
+- *(deps)* drop orphaned async-trait entry from Cargo.lock ([#248](https://github.com/nambok/mentedb-mcp/pull/248))
+- *(deps)* migrate to rmcp 3.7 ([#242](https://github.com/nambok/mentedb-mcp/pull/242))
+- *(deps)* move all mentedb engine crates to 0.43.1 ([#241](https://github.com/nambok/mentedb-mcp/pull/241))
+
+### Other
+
+- *(deps)* bump the cargo-minor-patch group with 2 updates ([#244](https://github.com/nambok/mentedb-mcp/pull/244))
+- *(deps)* bump typed-path from 0.12.3 to 0.12.4 ([#245](https://github.com/nambok/mentedb-mcp/pull/245))
+- *(deps)* bump axum from 0.7.9 to 0.8.9 ([#247](https://github.com/nambok/mentedb-mcp/pull/247))
+- *(deps)* bump actions/setup-node ([#243](https://github.com/nambok/mentedb-mcp/pull/243))
+
 ## [0.5.47](https://github.com/nambok/mentedb-mcp/compare/v0.5.46...v0.5.47) - 2026-10-23
 
 ### Other

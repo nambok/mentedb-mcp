@@ -58,7 +58,7 @@ impl MenteDbServer {
             .collect();
 
         tracing::info!(alerts = items.len(), "stream check complete");
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "alerts": items, "count": items.len() }).to_string(),
         )]))
     }
@@ -253,7 +253,7 @@ impl MenteDbServer {
         }
 
         tracing::info!(memory_id = %target_id, actions = items.len(), applied, "write inference complete");
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json!({ "inferred_actions": items, "count": items.len(), "applied": applied })
                 .to_string(),
         )]))

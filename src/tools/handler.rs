@@ -1,8 +1,8 @@
 use super::*;
 
-#[rmcp::tool_handler]
+#[rmcp::tool_handler(router = self.tool_router)]
 impl ServerHandler for MenteDbServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> InitializeResult {
         let mut instructions = String::from(
             "MenteDB gives you persistent memory across sessions. You have 4 tools:\n\
              \n\
@@ -27,7 +27,7 @@ impl ServerHandler for MenteDbServer {
             );
         }
 
-        ServerInfo::new(
+        InitializeResult::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
@@ -45,20 +45,43 @@ impl ServerHandler for MenteDbServer {
         _request: Option<PaginatedRequestParams>,
         _cx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Ok(ListResourcesResult {
-            meta: None,
-            next_cursor: None,
-            resources: vec![
-                RawResource::new("mentedb://stats", "stats".to_string()).no_annotation(),
-                RawResource::new("mentedb://memories", "memories".to_string()).no_annotation(),
-            ],
-        })
+        Ok(ListResourcesResult::with_all_items(vec![
+            Resource::new("mentedb://stats", "stats"),
+            Resource::new("mentedb://memories", "memories"),
+        ]))
     }
 
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         _cx: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        self.read_resource_result(request).map(Into::into)
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _cx: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult::with_all_items(vec![
+            ResourceTemplate::new("mentedb://memories/{id}", "memory")
+                .with_description("Access a specific memory by UUID")
+                .with_mime_type("application/json"),
+            ResourceTemplate::new("mentedb://cognitive/state", "cognitive_state")
+                .with_description(
+                    "Cognitive state: pain signals, phantom memories, trajectory predictions",
+                )
+                .with_mime_type("application/json"),
+        ]))
+    }
+}
+
+impl MenteDbServer {
+    /// Serve a `resources/read` request for the URIs this server exposes.
+    fn read_resource_result(
+        &self,
+        request: ReadResourceRequestParams,
     ) -> Result<ReadResourceResult, McpError> {
         let uri = &request.uri;
         let uri_str = uri.as_str();
@@ -194,39 +217,5 @@ impl ServerHandler for MenteDbServer {
             "resource_not_found",
             Some(json!({ "uri": uri_str })),
         ))
-    }
-
-    async fn list_resource_templates(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _cx: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<ListResourceTemplatesResult, McpError> {
-        Ok(ListResourceTemplatesResult {
-            meta: None,
-            next_cursor: None,
-            resource_templates: vec![
-                RawResourceTemplate {
-                    uri_template: "mentedb://memories/{id}".to_string(),
-                    name: "memory".to_string(),
-                    title: None,
-                    description: Some("Access a specific memory by UUID".to_string()),
-                    mime_type: Some("application/json".to_string()),
-                    icons: None,
-                }
-                .no_annotation(),
-                RawResourceTemplate {
-                    uri_template: "mentedb://cognitive/state".to_string(),
-                    name: "cognitive_state".to_string(),
-                    title: None,
-                    description: Some(
-                        "Cognitive state: pain signals, phantom memories, trajectory predictions"
-                            .to_string(),
-                    ),
-                    mime_type: Some("application/json".to_string()),
-                    icons: None,
-                }
-                .no_annotation(),
-            ],
-        })
     }
 }

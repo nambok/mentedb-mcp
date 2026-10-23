@@ -76,7 +76,7 @@ impl MenteDbServer {
                         "zones_used": window.metadata.zones_used,
                     },
                 });
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     result.to_string(),
                 )]))
             }
@@ -96,7 +96,7 @@ impl MenteDbServer {
             "version": env!("CARGO_PKG_VERSION"),
             "memory_count": memory_count,
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             result.to_string(),
         )]))
     }

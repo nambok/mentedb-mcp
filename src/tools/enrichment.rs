@@ -59,7 +59,7 @@ impl MenteDbServer {
         provider_name: &str,
         api_key: Option<&str>,
     ) -> Option<ExtractionConfig> {
-        match provider_name.to_lowercase().as_str() {
+        let cfg = match provider_name.to_lowercase().as_str() {
             "openai" => {
                 let key = api_key?;
                 let mut cfg = ExtractionConfig::openai(key);
@@ -84,6 +84,9 @@ impl MenteDbServer {
                 Some(cfg)
             }
             _ => None,
-        }
+        };
+        // Honor MENTEDB_LLM_MAX_OUTPUT_TOKENS / MENTEDB_LLM_EFFORT /
+        // MENTEDB_LLM_TIMEOUT_SECS, the knobs the engine's errors point to.
+        cfg.map(ExtractionConfig::with_output_env)
     }
 }

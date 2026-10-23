@@ -54,7 +54,8 @@ impl MenteDbServer {
                     "Unknown provider: {other}. Use openai, anthropic, ollama, or mock."
                 ));
             }
-        };
+        }
+        .with_output_env();
 
         // Gather existing memories for dedup/contradiction checks via HNSW
         let existing_memories = {

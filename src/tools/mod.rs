@@ -312,6 +312,10 @@ pub(crate) fn friendly_extraction_error(e: &mentedb_extraction::ExtractionError)
             "the LLM provider is rate limiting (enrichment will retry later)"
         }
         E::ParseError(_) => "the LLM response could not be parsed",
+        E::Truncated { .. } => {
+            "the model hit its output token limit before finishing \
+             (raise MENTEDB_LLM_MAX_OUTPUT_TOKENS)"
+        }
         E::EmbeddingError(_) => "the embedding provider failed",
         E::ProviderError(_) | E::HttpError(_) => {
             "the LLM provider rejected the request, usually a provider or model mismatch \

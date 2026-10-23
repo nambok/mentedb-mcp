@@ -729,17 +729,18 @@ fn user_prompt_fails_open_fast_when_cloud_hangs() {
     drop(hold);
 }
 
+/// Requests a fake cloud has seen: (tool name, memories carried).
+type SeenCalls = std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>;
+
 /// A fake cloud that answers every tool call with success and records, per
 /// request, the tool name and how many memories it carried.
-fn fake_cloud() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
+fn fake_cloud() -> (u16, SeenCalls) {
     fake_cloud_with_delay(Duration::ZERO)
 }
 
 /// `fake_cloud` that takes `per_memory` to answer for each memory a call
 /// carries, like a server that embeds and checks every note.
-fn fake_cloud_with_delay(
-    per_memory: Duration,
-) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
+fn fake_cloud_with_delay(per_memory: Duration) -> (u16, SeenCalls) {
     use std::io::{BufRead, BufReader, Read};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();

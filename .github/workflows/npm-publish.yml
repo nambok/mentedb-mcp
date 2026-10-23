@@ -171,17 +171,25 @@ jobs:
               # platform package at this version, so an install right after the
               # release resolves the binary it depends on.
               version=$(node -p 'require("./npm/mentedb-mcp/package.json").version')
+              # Registry propagation has taken over 5 minutes, so wait up to 15.
               for plat in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-                for i in $(seq 1 30); do
+                for i in $(seq 1 90); do
                   [ "$(npm view "@mentedb/mcp-$plat@$version" version --prefer-online 2>/dev/null)" = "$version" ] && break
-                  [ "$i" = 30 ] && { echo "@mentedb/mcp-$plat@$version never appeared on the registry"; exit 1; }
+                  [ "$i" = 90 ] && { echo "@mentedb/mcp-$plat@$version never appeared on the registry"; exit 1; }
                   sleep 10
                 done
               done
             fi
+            # A rerun skips what an earlier attempt already published.
+            name=$(node -p "require('./npm/$pkg/package.json').name")
+            pkgver=$(node -p "require('./npm/$pkg/package.json').version")
+            if [ "$(npm view "$name@$pkgver" version --prefer-online 2>/dev/null)" = "$pkgver" ]; then
+              echo "$pkg: $pkgver already on the registry, skipping"
+              continue
+            fi
             (cd npm/$pkg && npm publish --access public 2>publish.err) || {
               cat npm/$pkg/publish.err
-              if grep -qE "EPUBLISHCONFLICT|cannot publish over|previously published" npm/$pkg/publish.err; then
+              if grep -qiE "EPUBLISHCONFLICT|cannot publish over|previously published|previously staged" npm/$pkg/publish.err; then
                 echo "$pkg: already published, skipping"
               else
                 exit 1

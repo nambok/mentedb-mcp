@@ -82,7 +82,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -93,7 +93,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -276,13 +276,13 @@ dependencies = [
  "memmap2",
  "num-traits",
  "num_cpus",
- "parking_lot",
+ "parking_lot 0.12.5",
  "rand 0.9.5",
  "rand_distr",
  "rayon",
  "safetensors",
  "thiserror 2.0.21",
- "tokenizers 0.23.2",
+ "tokenizers",
  "yoke",
  "zerocopy",
  "zip",
@@ -737,7 +737,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -824,7 +824,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -860,6 +860,26 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "fearless_simd"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "629c9d6b6f30b5604089e0980f4d924a013aacb1654a6cdf5d3d852224f68651"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "fearless_simd_macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e91d94c6885390b81782d7ee60fd6583b33907333a8b340de25ccf468353315"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -1670,6 +1690,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1683,9 +1712,9 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lz4_flex"
-version = "0.11.6"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+checksum = "f56455fff36934a9500d69062aec1c77037179b6f0669e4d5d6b72b84722d6a3"
 dependencies = [
  "twox-hash",
 ]
@@ -1739,11 +1768,12 @@ dependencies = [
 
 [[package]]
 name = "mentedb"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5def8360adf21f2a2ebc249d7540fb0ab08f5e4373025184114c5d67240ed08a"
+checksum = "fc2333467ee9c7d02d37cf8b9013d2415ff6099769d0a8bcb76c07c29e874e99"
 dependencies = [
  "crc32fast",
+ "memchr",
  "mentedb-cognitive",
  "mentedb-consolidation",
  "mentedb-context",
@@ -1754,9 +1784,10 @@ dependencies = [
  "mentedb-index",
  "mentedb-query",
  "mentedb-storage",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tracing",
  "uuid",
@@ -1764,14 +1795,14 @@ dependencies = [
 
 [[package]]
 name = "mentedb-cognitive"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87526645305474097ddd8cea1d12a3406116e9439f8c00d98cd78233ebe5330a"
+checksum = "235a8abc3259d775a0ea18cb5f661c20cf932ef417c70e069c10755cbcbfafc5"
 dependencies = [
  "ahash",
  "crossbeam",
  "mentedb-core",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1781,9 +1812,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-consolidation"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1dfe2bf49091cf90fe36c6fa360acffd3a0fc2c9cca3c644f2c1341776e36a7"
+checksum = "7f3bedb2393c68e432483a029cde575c8b6fe9d244c56c7e634f72559950cd1d"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1794,9 +1825,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-context"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db8d68a086aaa1c87f0c6dce20cf97198912198be9a7642a504b8c183cf5de1b"
+checksum = "c0f1af70927cf3d9c58a11fe1df03b9f2ee96bc711bd8312cddc3c9295d553d6"
 dependencies = [
  "ahash",
  "mentedb-core",
@@ -1808,14 +1839,14 @@ dependencies = [
 
 [[package]]
 name = "mentedb-core"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0beba65e2173f9e8af86ede9dd518a2c18a6ad6c9c8857352b67584d82125f8"
+checksum = "71b652cb417b00c8b846fbe0187b1ec6ba84cb391edffa47e60c5e727d383496"
 dependencies = [
  "ahash",
  "bytemuck",
  "bytes",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
  "smallvec",
@@ -1825,9 +1856,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-embedding"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85f607ed1d4e844ae718b323ac361793538bddce44e44bb3183925b4f9692cd6"
+checksum = "e924c95bcf89f8055914ea31e2dc518e2456f263ce9c6ebb3b3d23b578e668fb"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -1837,16 +1868,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokenizers 0.21.4",
+ "tokenizers",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "mentedb-extraction"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2e88a389686fe39dfa108b6e6d0a351bb69d9c8f878951bc829ed70f10b0bdf"
+checksum = "51d6b5f7c72370d26977e3ef033276b3900faafc92be314f9ed15b6b61b95689"
 dependencies = [
  "mentedb-cognitive",
  "mentedb-core",
@@ -1862,15 +1893,15 @@ dependencies = [
 
 [[package]]
 name = "mentedb-graph"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e74b0aea5854d5e452547a1b77c05981c2f159bcf6d7f25f40af130d7a88601f"
+checksum = "d907069dd972094ba011a6a20cd352262642eacdb503245bd9525051077d23cf"
 dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
  "mentedb-core",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
  "smallvec",
@@ -1879,15 +1910,15 @@ dependencies = [
 
 [[package]]
 name = "mentedb-index"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ee02e350843299fe2b658bca4f26f502dab42c90e65b16658594c7d4ed00c3a"
+checksum = "d1688c731094f19ac0c163121c7e1f2d536fab5bb38a3a920c1c378efd8ac609"
 dependencies = [
  "ahash",
  "bincode",
  "bytemuck",
  "mentedb-core",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.9.5",
  "roaring",
  "serde",
@@ -1929,9 +1960,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-query"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1988ec2f7ce7e152f2f12122eeae05fec9141b36fdf9856b56387dd6aaf5fb83"
+checksum = "962c309674885d7ff75f5724b4f965e5368fc8fd23f3eb52f92c6aa86f144b90"
 dependencies = [
  "mentedb-core",
  "serde",
@@ -1942,9 +1973,9 @@ dependencies = [
 
 [[package]]
 name = "mentedb-storage"
-version = "0.43.1"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7805fc04309ad2e65aea8cd07af7c6ab86df58ca5f0cbb13385aac4b6e947d9b"
+checksum = "246d7986e64701c3b8024404f01307affaf491bcb9eeebb9ee0c4ed604bfd44a"
 dependencies = [
  "ahash",
  "bincode",
@@ -1955,7 +1986,7 @@ dependencies = [
  "libc",
  "lz4_flex",
  "mentedb-core",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2069,7 +2100,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2223,8 +2254,18 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
- "lock_api",
- "parking_lot_core",
+ "lock_api 0.4.14",
+ "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -2235,7 +2276,19 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.5",
  "smallvec",
  "windows-link",
 ]
@@ -2385,7 +2438,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2525,6 +2578,15 @@ name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags",
 ]
@@ -2689,12 +2751,14 @@ dependencies = [
 
 [[package]]
 name = "roaring"
-version = "0.11.5"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18bd8a37d17a58532776dcdf6041ce64929adca78e8489d5cacbafe99229d3e1"
+checksum = "eccfaa25083dbde9444486adda410c9cd23565d7f54a2df916c0bdf4bee44931"
 dependencies = [
  "bytemuck",
  "byteorder",
+ "fearless_simd",
+ "fearless_simd_macros",
 ]
 
 [[package]]
@@ -2713,7 +2777,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3009,7 +3073,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3149,10 +3213,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3252,39 +3316,6 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokenizers"
-version = "0.21.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a620b996116a59e184c2fa2dfd8251ea34a36d0a514758c6f966386bd2e03476"
-dependencies = [
- "ahash",
- "aho-corasick",
- "compact_str",
- "dary_heap",
- "derive_builder",
- "esaxx-rs",
- "getrandom 0.3.4",
- "itertools",
- "log",
- "macro_rules_attribute",
- "monostate",
- "onig",
- "paste",
- "rand 0.9.5",
- "rayon",
- "rayon-cond",
- "regex",
- "regex-syntax",
- "serde",
- "serde_json",
- "spm_precompiled",
- "thiserror 2.0.21",
- "unicode-normalization-alignments",
- "unicode-segmentation",
- "unicode_categories",
-]
-
-[[package]]
-name = "tokenizers"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7afbf6e88718afcc138bad01d6ccc3051dbbc3b2ce9793d8b8a3aeb610969cfc"
@@ -3301,6 +3332,7 @@ dependencies = [
  "log",
  "macro_rules_attribute",
  "monostate",
+ "onig",
  "paste",
  "rand 0.9.5",
  "rayon",
@@ -3325,7 +3357,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -3807,7 +3839,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.50](https://github.com/nambok/mentedb-mcp/compare/v0.5.49...v0.5.50) - 2026-11-15
+
+### Other
+
+- *(deps)* move all mentedb engine crates from 0.43.1 to 0.48.0 ([#267](https://github.com/nambok/mentedb-mcp/pull/267))
+
 ## [0.5.49](https://github.com/nambok/mentedb-mcp/compare/v0.5.48...v0.5.49) - 2026-11-06
 
 ### Other
